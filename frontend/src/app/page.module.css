@@ -1,0 +1,519 @@
+.page {
+  min-height: 100vh;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  padding: 48px clamp(20px, 5vw, 64px);
+}
+
+.main {
+  width: min(1100px, 100%);
+  display: grid;
+  gap: 32px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  align-items: start;
+}
+
+.hero {
+  display: grid;
+  gap: 16px;
+  align-content: start;
+}
+
+.hero h1 {
+  font-size: clamp(2.3rem, 2.6vw, 3rem);
+  line-height: 1.05;
+  letter-spacing: -0.04em;
+}
+
+.kicker {
+  text-transform: uppercase;
+  letter-spacing: 0.4em;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.subhead {
+  color: var(--ink-dim);
+  font-size: 1.05rem;
+  max-width: 32ch;
+}
+
+.signalRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.25em;
+  color: var(--muted);
+}
+
+.signalRow code {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.75rem;
+  letter-spacing: 0.12em;
+  color: var(--ink);
+  background: rgba(7, 14, 24, 0.6);
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--edge);
+}
+
+.pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 12px var(--glow);
+  animation: pulse 2s infinite ease-in-out;
+}
+
+.panel {
+  background: var(--panel);
+  border-radius: 22px;
+  border: 1px solid var(--edge);
+  padding: 28px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(14px);
+}
+
+.authChip {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+  padding: 16px 18px;
+  border-radius: 18px;
+  border: 1px solid var(--edge);
+  background: rgba(7, 14, 24, 0.72);
+  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.25);
+  max-width: 260px;
+  width: 100%;
+  justify-self: start;
+}
+
+.chipTitle {
+  font-size: 1.1rem;
+  margin-top: 4px;
+}
+
+.chipMeta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.chipMeta code {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  color: var(--ink);
+  background: rgba(7, 14, 24, 0.6);
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--edge);
+}
+
+.authChip button {
+  border: 1px solid var(--edge);
+  background: transparent;
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 10px 16px;
+  cursor: pointer;
+}
+
+.authOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(3, 6, 12, 0.65);
+  display: grid;
+  place-items: center;
+  z-index: 20;
+  backdrop-filter: blur(6px);
+}
+
+.authDialog {
+  width: min(420px, 92vw);
+  background: rgba(7, 14, 24, 0.92);
+  border-radius: 22px;
+  border: 1px solid var(--edge);
+  padding: 24px;
+  display: grid;
+  gap: 18px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4);
+}
+
+.authDialog h3 {
+  font-size: 1.2rem;
+  margin-top: 6px;
+}
+
+.dialogSubhead {
+  color: var(--muted);
+  font-size: 0.95rem;
+  margin-top: 8px;
+}
+
+.dialogActions {
+  display: grid;
+  gap: 10px;
+}
+
+.dialogActions button {
+  border: none;
+  border-radius: 999px;
+  padding: 12px 18px;
+  font-weight: 600;
+  cursor: pointer;
+  color: #081425;
+  background: linear-gradient(120deg, var(--accent), var(--accent-strong));
+}
+
+.dialogActions .ghost {
+  border: 1px solid var(--edge) !important;
+}
+
+.danger {
+  background: linear-gradient(120deg, #ff6b6b, #ff3d58);
+  color: #0b111b;
+}
+
+.tradePanel {
+  grid-column: 1 / -1;
+  background: var(--panel);
+  border-radius: 24px;
+  border: 1px solid var(--edge);
+  padding: 28px;
+  display: grid;
+  gap: 24px;
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.32);
+}
+
+.tradeHeader {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+}
+
+.tradeHeader h2 {
+  font-size: 1.6rem;
+  margin-top: 6px;
+}
+
+.tradeSubhead {
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.stationInput {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.stationInput label {
+  display: grid;
+  gap: 8px;
+  font-size: 0.7rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.stationInput input {
+  background: var(--panel-strong);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  padding: 10px 12px;
+  color: var(--ink);
+  min-width: 100px;
+}
+
+.stationInput button {
+  border: 1px solid var(--edge);
+  background: transparent;
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 10px 18px;
+  cursor: pointer;
+}
+
+.tradeGrid {
+  display: grid;
+  grid-template-columns: minmax(240px, 1.4fr) minmax(220px, 0.8fr);
+  gap: 20px;
+}
+
+.inventoryList {
+  display: grid;
+  gap: 12px;
+}
+
+.inventoryItem,
+.inventoryItemActive {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-radius: 16px;
+  border: 1px solid var(--edge);
+  padding: 14px 16px;
+  background: rgba(8, 16, 30, 0.8);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition: border 0.2s ease, transform 0.2s ease;
+}
+
+.inventoryItemActive {
+  border-color: rgba(255, 179, 71, 0.7);
+  box-shadow: 0 10px 24px rgba(255, 179, 71, 0.2);
+  transform: translateY(-1px);
+}
+
+.inventoryItem span,
+.inventoryItemActive span {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.tradeControls {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+  padding: 18px;
+  border-radius: 18px;
+  background: rgba(7, 14, 24, 0.7);
+  border: 1px solid var(--edge);
+}
+
+.tradeControls label {
+  display: grid;
+  gap: 8px;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: var(--muted);
+}
+
+.tradeControls input {
+  background: var(--panel-strong);
+  border: 1px solid transparent;
+  border-radius: 12px;
+  padding: 12px;
+  color: var(--ink);
+}
+
+.tradeControls button {
+  border: none;
+  border-radius: 999px;
+  padding: 12px 18px;
+  font-weight: 600;
+  cursor: pointer;
+  color: #081425;
+  background: linear-gradient(120deg, var(--accent), var(--accent-strong));
+}
+
+.tradeControls button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.segmented {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  background: rgba(8, 18, 32, 0.8);
+  border-radius: 999px;
+  border: 1px solid var(--edge);
+  padding: 6px;
+}
+
+.segmented button {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  padding: 8px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.segmentActive {
+  color: #06111f !important;
+  background: var(--accent) !important;
+  box-shadow: 0 10px 20px rgba(255, 179, 71, 0.35);
+}
+
+.tradeStatus {
+  display: grid;
+  gap: 6px;
+  font-size: 0.95rem;
+  color: var(--ok);
+}
+
+.emptyState {
+  padding: 20px;
+  border-radius: 14px;
+  border: 1px dashed var(--edge);
+  color: var(--muted);
+}
+
+.modeSwitch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  background: rgba(8, 18, 32, 0.8);
+  border-radius: 999px;
+  border: 1px solid var(--edge);
+  padding: 6px;
+  margin-bottom: 20px;
+}
+
+.modeSwitch button {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  padding: 10px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.modeSwitch button.active {
+  color: #06111f;
+  background: var(--accent);
+  box-shadow: 0 10px 20px rgba(255, 179, 71, 0.35);
+}
+
+.form {
+  display: grid;
+  gap: 16px;
+}
+
+.form label {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+}
+
+.form input {
+  background: var(--panel-strong);
+  border: 1px solid transparent;
+  border-radius: 14px;
+  padding: 14px 16px;
+  color: var(--ink);
+  transition: border 0.2s ease, box-shadow 0.2s ease;
+}
+
+.form input:focus {
+  outline: none;
+  border-color: rgba(255, 179, 71, 0.6);
+  box-shadow: 0 0 0 2px rgba(255, 179, 71, 0.12);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.actions button {
+  border: none;
+  border-radius: 999px;
+  padding: 12px 22px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  color: #081425;
+  background: linear-gradient(120deg, var(--accent), var(--accent-strong));
+  box-shadow: 0 12px 30px rgba(255, 140, 26, 0.28);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+  box-shadow: none;
+}
+
+.actions button:not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 16px 36px rgba(255, 140, 26, 0.35);
+}
+
+.ghost {
+  background: transparent !important;
+  color: var(--ink) !important;
+  border: 1px solid var(--edge) !important;
+  box-shadow: none !important;
+}
+
+.statusPanel {
+  display: grid;
+  gap: 16px;
+  padding: 22px 24px;
+  border-radius: 20px;
+  border: 1px solid var(--edge);
+  background: rgba(7, 14, 24, 0.72);
+  backdrop-filter: blur(10px);
+}
+
+.status {
+  font-size: 1.1rem;
+  color: var(--ok);
+  margin-top: 6px;
+}
+
+.label {
+  color: var(--muted);
+  font-size: 0.7rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 12px;
+}
+
+.mono {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.85rem;
+}
+
+@keyframes pulse {
+
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.8;
+  }
+
+  50% {
+    transform: scale(1.5);
+    opacity: 0.3;
+  }
+}
+
+@media (max-width: 720px) {
+  .page {
+    padding: 32px 20px;
+  }
+
+  .actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .tradeGrid {
+    grid-template-columns: 1fr;
+  }
+}
