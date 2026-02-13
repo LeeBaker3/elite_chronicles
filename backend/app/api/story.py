@@ -10,10 +10,34 @@ from app.schemas.story import (
     StoryInterpretRequest,
     StoryInterpretResponse,
     StoryProceedResponse,
+    StorySessionSummary,
     StoryStartResponse,
 )
 
 router = APIRouter()
+
+
+@router.get("/sessions", response_model=list[StorySessionSummary])
+def list_sessions(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    sessions = (
+        db.query(StorySession)
+        .filter(StorySession.user_id == current_user.id)
+        .order_by(StorySession.created_at.desc())
+        .limit(20)
+        .all()
+    )
+    return [
+        StorySessionSummary(
+            id=session.id,
+            location_type=session.location_type,
+            location_id=session.location_id,
+            status=session.status,
+        )
+        for session in sessions
+    ]
 
 
 @router.post("/start/{location_id}", response_model=StoryStartResponse)

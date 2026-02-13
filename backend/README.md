@@ -21,3 +21,8 @@ uvicorn app.main:app --reload
 ## Health Check
 
 `GET /health`
+
+## Trade + Cargo Notes
+
+- `POST /api/stations/{station_id}/trade` accepts optional `ship_id` and enforces cargo capacity/cargo availability when provided.
+- `GET /api/ships/{ship_id}/cargo` returns cargo capacity, used/free totals, and current cargo contents.

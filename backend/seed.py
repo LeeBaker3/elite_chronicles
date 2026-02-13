@@ -166,6 +166,10 @@ def get_or_create_user(db: Session, faction_id: int) -> User:
 def get_or_create_ship(db: Session, user_id: int, station_id: int) -> Ship:
     ship = db.query(Ship).filter(Ship.owner_user_id == user_id).first()
     if ship:
+        if ship.cargo_capacity <= 0:
+            ship.cargo_capacity = 40
+            db.commit()
+            db.refresh(ship)
         return ship
     ship = Ship(
         owner_user_id=user_id,
@@ -178,6 +182,7 @@ def get_or_create_ship(db: Session, user_id: int, station_id: int) -> Ship:
         energy_current=60,
         fuel_cap=100,
         fuel_current=100,
+        cargo_capacity=40,
         status="docked",
         docked_station_id=station_id,
     )

@@ -18,6 +18,7 @@ class Ship(Base):
     energy_current = Column(Integer, nullable=False)
     fuel_cap = Column(Integer, nullable=False)
     fuel_current = Column(Integer, nullable=False)
+    cargo_capacity = Column(Integer, nullable=False, default=0)
     position_x = Column(Integer, nullable=False, default=0)
     position_y = Column(Integer, nullable=False, default=0)
     position_z = Column(Integer, nullable=False, default=0)

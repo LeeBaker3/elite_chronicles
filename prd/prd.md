@@ -258,6 +258,10 @@ Admin and Observability
 - combat_participants: id, combat_session_id, ship_id, user_id, side, status
 - combat_logs: id, combat_session_id, attacker_ship_id, target_ship_id, weapon_id, damage, shield_damage, hull_damage, timestamp
 
+15. UI Foundations (Post-Prototype)
+- A shared UI foundations checklist governs cross-application primitives for tooltips, toasts, and empty states.
+- See [ui-foundations-checklist.md](ui-foundations-checklist.md) for rollout phases and acceptance criteria.
+
 6.8 Communication
 - communication_nodes: id, system_id, station_id, relay_range, latency_per_hop, processing_delay
 - messages: id, sender_id, receiver_id, content, path_json, deliver_at, delivered_at, status

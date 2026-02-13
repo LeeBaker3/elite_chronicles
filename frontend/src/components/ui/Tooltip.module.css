@@ -1,0 +1,44 @@
+.root {
+    position: relative;
+    display: inline-flex;
+}
+
+.tooltip {
+    position: absolute;
+    z-index: 40;
+    pointer-events: none;
+    border: 1px solid var(--edge);
+    border-radius: 10px;
+    background: rgba(7, 14, 24, 0.96);
+    color: var(--ink);
+    font-size: 0.78rem;
+    line-height: 1.35;
+    padding: 8px 10px;
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
+    width: max-content;
+    max-width: 260px;
+}
+
+.top {
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+.bottom {
+    top: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+.left {
+    right: calc(100% + 8px);
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+.right {
+    left: calc(100% + 8px);
+    top: 50%;
+    transform: translateY(-50%);
+}

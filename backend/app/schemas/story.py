@@ -24,3 +24,10 @@ class StoryConfirmRequest(BaseModel):
 class StoryProceedResponse(BaseModel):
     outcome: str
     next_state: str
+
+
+class StorySessionSummary(BaseModel):
+    id: int
+    location_type: str
+    location_id: int
+    status: str

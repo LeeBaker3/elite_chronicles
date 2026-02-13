@@ -1,6 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { DataState } from "../components/ui/DataState";
+import { useToast } from "../components/ui/ToastProvider";
+import { Tooltip } from "../components/ui/Tooltip";
 import styles from "./page.module.css";
 
 const API_BASE =
@@ -18,7 +21,34 @@ type InventoryItem = {
   sell_price: number;
 };
 
+type CargoItem = {
+  commodity_id: number;
+  commodity_name: string;
+  quantity: number;
+};
+
+type ShipCargoData = {
+  ship_id: number;
+  cargo_capacity: number;
+  cargo_used: number;
+  cargo_free: number;
+  items: CargoItem[];
+};
+
+type StationOption = {
+  id: number;
+  name: string;
+};
+
+type StorySessionItem = {
+  id: number;
+  location_type: string;
+  location_id: number;
+  status: string;
+};
+
 export default function Home() {
+  const { showToast } = useToast();
   const [mode, setMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("");
   const [username, setUsername] = useState("");
@@ -28,13 +58,23 @@ export default function Home() {
   const [token, setToken] = useState<string | null>(null);
   const [userId, setUserId] = useState<number | null>(null);
   const [stationId, setStationId] = useState("1");
+  const [stationOptions, setStationOptions] = useState<StationOption[]>([]);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
+  const [inventoryLoading, setInventoryLoading] = useState(false);
+  const [inventoryError, setInventoryError] = useState<string | null>(null);
   const [selectedCommodity, setSelectedCommodity] = useState<number | null>(null);
   const [tradeQty, setTradeQty] = useState("1");
+  const [shipId, setShipId] = useState("1");
+  const [shipCargo, setShipCargo] = useState<ShipCargoData | null>(null);
+  const [cargoLoading, setCargoLoading] = useState(false);
+  const [cargoError, setCargoError] = useState<string | null>(null);
   const [direction, setDirection] = useState<TradeDirection>("buy");
   const [tradeStatus, setTradeStatus] = useState("Awaiting market data.");
   const [tradeLoading, setTradeLoading] = useState(false);
   const [showAuthMenu, setShowAuthMenu] = useState(false);
+  const [storySessions, setStorySessions] = useState<StorySessionItem[]>([]);
+  const [storyLoading, setStoryLoading] = useState(false);
+  const [storyError, setStoryError] = useState<string | null>(null);
 
   useEffect(() => {
     const stored = window.localStorage.getItem("elite_token");
@@ -46,10 +86,6 @@ export default function Home() {
       setUserId(Number(storedUser));
     }
   }, []);
-
-  useEffect(() => {
-    void fetchInventory();
-  }, [stationId]);
 
   const canSubmit = useMemo(() => {
     if (!email || !password) return false;
@@ -77,7 +113,9 @@ export default function Home() {
 
       const data = await response.json();
       if (!response.ok) {
-        setStatus(data?.error?.message || data?.detail || "Auth failed.");
+        const message = data?.error?.message || data?.detail || "Auth failed.";
+        setStatus(message);
+        showToast({ message, variant: "error" });
         setLoading(false);
         return;
       }
@@ -87,8 +125,10 @@ export default function Home() {
       window.localStorage.setItem("elite_token", data.token);
       window.localStorage.setItem("elite_user_id", String(data.user_id));
       setStatus("Docking sequence green. Token stored.");
-    } catch (error) {
+      showToast({ message: "Authentication successful.", variant: "success" });
+    } catch {
       setStatus("Network failure. Check API availability.");
+      showToast({ message: "Network failure. Check API availability.", variant: "error" });
     } finally {
       setLoading(false);
     }
@@ -100,7 +140,11 @@ export default function Home() {
     window.localStorage.removeItem("elite_token");
     window.localStorage.removeItem("elite_user_id");
     setStatus("Login required to access market.");
+    showToast({ message: "Logged out. Login required to access market.", variant: "info" });
     setShowAuthMenu(false);
+    setShipCargo(null);
+    setStorySessions([]);
+    setStationOptions([]);
   };
 
   const handleSwitchAccount = () => {
@@ -109,9 +153,10 @@ export default function Home() {
     setPassword("");
   };
 
-  const fetchInventory = async (options?: { silent?: boolean }) => {
+  const fetchInventory = useCallback(async (options?: { silent?: boolean }) => {
     if (!stationId.trim()) return;
-    setTradeLoading(true);
+    setInventoryLoading(true);
+    setInventoryError(null);
     if (!options?.silent) {
       setTradeStatus("Polling station market feed...");
     }
@@ -126,13 +171,21 @@ export default function Home() {
       );
       const data = await response.json();
       if (!response.ok) {
+        const message =
+          data?.error?.message || data?.detail || "Inventory unavailable.";
         if (!options?.silent) {
-          setTradeStatus(
-            data?.error?.message || data?.detail || "Inventory unavailable."
-          );
+          setTradeStatus(message);
+          showToast({
+            message,
+            variant: "error",
+            actionLabel: "Retry",
+            onAction: () => {
+              void fetchInventory({ silent: false });
+            },
+          });
         }
+        setInventoryError(message);
         setInventory([]);
-        setTradeLoading(false);
         return;
       }
       setInventory(data);
@@ -142,15 +195,203 @@ export default function Home() {
       if (!options?.silent) {
         setTradeStatus("Market data locked.");
       }
-    } catch (error) {
+    } catch {
+      setInventoryError("Market uplink failed.");
       if (!options?.silent) {
         setTradeStatus("Market uplink failed.");
+        showToast({
+          message: "Market uplink failed.",
+          variant: "error",
+          actionLabel: "Retry",
+          onAction: () => {
+            void fetchInventory({ silent: false });
+          },
+        });
       }
       setInventory([]);
     } finally {
-      setTradeLoading(false);
+      setInventoryLoading(false);
+    }
+  }, [selectedCommodity, showToast, stationId, token]);
+
+  const fetchStations = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_BASE}/api/stations`);
+      const data = await response.json();
+      if (!response.ok) {
+        showToast({
+          message: "Unable to load stations.",
+          variant: "warning",
+          actionLabel: "Retry",
+          onAction: () => {
+            void fetchStations();
+          },
+        });
+        return;
+      }
+      setStationOptions(data);
+      if (data.length && !data.some((station: StationOption) => String(station.id) === stationId)) {
+        setStationId(String(data[0].id));
+      }
+    } catch {
+      setStationOptions([]);
+      showToast({
+        message: "Unable to load stations.",
+        variant: "warning",
+        actionLabel: "Retry",
+        onAction: () => {
+          void fetchStations();
+        },
+      });
+    }
+  }, [showToast, stationId]);
+
+  const fetchStorySessions = useCallback(async () => {
+    if (!token) return;
+    setStoryLoading(true);
+    setStoryError(null);
+    try {
+      const response = await fetch(`${API_BASE}/api/story/sessions`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setStorySessions([]);
+        setStoryError("Unable to load story sessions.");
+        showToast({
+          message: "Unable to load story sessions.",
+          variant: "warning",
+          actionLabel: "Retry",
+          onAction: () => {
+            void fetchStorySessions();
+          },
+        });
+        return;
+      }
+      setStorySessions(data);
+    } catch {
+      setStorySessions([]);
+      setStoryError("Unable to load story sessions.");
+      showToast({
+        message: "Unable to load story sessions.",
+        variant: "warning",
+        actionLabel: "Retry",
+        onAction: () => {
+          void fetchStorySessions();
+        },
+      });
+    } finally {
+      setStoryLoading(false);
+    }
+  }, [showToast, token]);
+
+  const handleStoryStart = async () => {
+    if (!token || !stationId.trim()) return;
+    try {
+      const response = await fetch(`${API_BASE}/api/story/start/${stationId}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        showToast({
+          message: "Unable to start story session.",
+          variant: "error",
+          actionLabel: "Retry",
+          onAction: () => {
+            void handleStoryStart();
+          },
+        });
+        return;
+      }
+      await fetchStorySessions();
+      setStatus("Story session started.");
+      showToast({ message: "Story session started.", variant: "success" });
+    } catch {
+      setStatus("Unable to start story session.");
+      showToast({
+        message: "Unable to start story session.",
+        variant: "error",
+        actionLabel: "Retry",
+        onAction: () => {
+          void handleStoryStart();
+        },
+      });
     }
   };
+
+  const fetchShipCargo = useCallback(async (options?: { silent?: boolean }) => {
+    const parsedShipId = Number(shipId);
+    if (!Number.isInteger(parsedShipId) || parsedShipId <= 0) {
+      setShipCargo(null);
+      setCargoError("Ship ID must be a valid positive number.");
+      return;
+    }
+
+    setCargoLoading(true);
+    setCargoError(null);
+    try {
+      const response = await fetch(`${API_BASE}/api/ships/${parsedShipId}/cargo`);
+      const data = await response.json();
+      if (!response.ok) {
+        const message =
+          data?.error?.message || data?.detail || "Cargo unavailable.";
+        if (!options?.silent) {
+          setTradeStatus(message);
+          showToast({
+            message,
+            variant: "warning",
+            actionLabel: "Retry",
+            onAction: () => {
+              void fetchShipCargo({ silent: false });
+            },
+          });
+        }
+        setCargoError(message);
+        setShipCargo(null);
+        return;
+      }
+      setShipCargo(data);
+    } catch {
+      setCargoError("Cargo uplink failed.");
+      if (!options?.silent) {
+        setTradeStatus("Cargo uplink failed.");
+        showToast({
+          message: "Cargo uplink failed.",
+          variant: "error",
+          actionLabel: "Retry",
+          onAction: () => {
+            void fetchShipCargo({ silent: false });
+          },
+        });
+      }
+      setShipCargo(null);
+    } finally {
+      setCargoLoading(false);
+    }
+  }, [shipId, showToast]);
+
+  useEffect(() => {
+    void fetchInventory();
+  }, [fetchInventory]);
+
+  useEffect(() => {
+    if (!token) {
+      setStationOptions([]);
+      setStorySessions([]);
+      return;
+    }
+    void fetchStations();
+    void fetchStorySessions();
+  }, [fetchStations, fetchStorySessions, token]);
+
+  useEffect(() => {
+    if (!token) {
+      setShipCargo(null);
+      setCargoError(null);
+      return;
+    }
+    void fetchShipCargo({ silent: true });
+  }, [fetchShipCargo, token]);
 
   const handleTrade = async () => {
     if (!stationId.trim()) return;
@@ -159,8 +400,13 @@ export default function Home() {
       return;
     }
     const qty = Number(tradeQty);
+    const parsedShipId = Number(shipId);
     if (!Number.isFinite(qty) || qty <= 0) {
       setTradeStatus("Quantity must be positive.");
+      return;
+    }
+    if (!Number.isInteger(parsedShipId) || parsedShipId <= 0) {
+      setTradeStatus("Ship ID must be a valid positive number.");
       return;
     }
 
@@ -176,6 +422,7 @@ export default function Home() {
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
           body: JSON.stringify({
+            ship_id: parsedShipId,
             commodity_id: selectedCommodity,
             qty,
             direction,
@@ -184,14 +431,33 @@ export default function Home() {
       );
       const data = await response.json();
       if (!response.ok) {
-        setTradeStatus(data?.error?.message || data?.detail || "Trade failed.");
+        const message = data?.error?.message || data?.detail || "Trade failed.";
+        setTradeStatus(message);
+        showToast({
+          message,
+          variant: "error",
+          actionLabel: "Retry",
+          onAction: () => {
+            void handleTrade();
+          },
+        });
         setTradeLoading(false);
         return;
       }
       await fetchInventory({ silent: true });
+      await fetchShipCargo({ silent: true });
       setTradeStatus(`Trade cleared. Remaining: ${data.remaining}`);
-    } catch (error) {
+      showToast({ message: "Trade cleared successfully.", variant: "success" });
+    } catch {
       setTradeStatus("Trade uplink failed.");
+      showToast({
+        message: "Trade uplink failed.",
+        variant: "error",
+        actionLabel: "Retry",
+        onAction: () => {
+          void handleTrade();
+        },
+      });
     } finally {
       setTradeLoading(false);
     }
@@ -336,21 +602,56 @@ export default function Home() {
               <div className={styles.stationInput}>
                 <label>
                   <span>Station ID</span>
-                  <input
-                    type="text"
-                    value={stationId}
-                    onChange={(event) => setStationId(event.target.value)}
-                  />
+                  <Tooltip
+                    content="Choose a station to load its live market inventory."
+                    placement="top"
+                  >
+                    <select
+                      value={stationId}
+                      onChange={(event) => setStationId(event.target.value)}
+                    >
+                      {stationOptions.length ? (
+                        stationOptions.map((station) => (
+                          <option key={station.id} value={station.id}>
+                            {station.name} (#{station.id})
+                          </option>
+                        ))
+                      ) : (
+                        <option value={stationId || "1"}>Station #{stationId || "1"}</option>
+                      )}
+                    </select>
+                  </Tooltip>
                 </label>
-                <button type="button" onClick={fetchInventory}>
-                  Refresh
-                </button>
+                <Tooltip
+                  content="Fetch the latest inventory and prices for the selected station."
+                  placement="top"
+                >
+                  <button type="button" onClick={fetchInventory}>
+                    Refresh
+                  </button>
+                </Tooltip>
               </div>
             </div>
 
             <div className={styles.tradeGrid}>
               <div className={styles.inventoryList}>
-                {inventory.length ? (
+                {inventoryLoading ? (
+                  <DataState
+                    variant="loading"
+                    title="Loading market inventory"
+                    description="Syncing the selected station feed."
+                  />
+                ) : inventoryError ? (
+                  <DataState
+                    variant="error"
+                    title="Inventory unavailable"
+                    description={inventoryError}
+                    actionLabel="Retry"
+                    onAction={() => {
+                      void fetchInventory({ silent: false });
+                    }}
+                  />
+                ) : inventory.length ? (
                   inventory.map((item) => (
                     <button
                       key={item.commodity_id}
@@ -373,7 +674,15 @@ export default function Home() {
                     </button>
                   ))
                 ) : (
-                  <div className={styles.emptyState}>No inventory loaded.</div>
+                  <DataState
+                    variant="empty"
+                    title="No inventory loaded"
+                    description="Select a station or refresh to pull market data."
+                    actionLabel="Refresh"
+                    onAction={() => {
+                      void fetchInventory({ silent: false });
+                    }}
+                  />
                 )}
               </div>
 
@@ -396,6 +705,16 @@ export default function Home() {
                 </div>
 
                 <label>
+                  <span>Ship ID</span>
+                  <input
+                    type="number"
+                    min="1"
+                    value={shipId}
+                    onChange={(event) => setShipId(event.target.value)}
+                  />
+                </label>
+
+                <label>
                   <span>Quantity</span>
                   <input
                     type="number"
@@ -405,19 +724,157 @@ export default function Home() {
                   />
                 </label>
 
-                <button
-                  type="button"
-                  onClick={handleTrade}
-                  disabled={tradeLoading}
+                <Tooltip
+                  content={
+                    tradeLoading
+                      ? "Trade request is in progress. Please wait."
+                      : "Submit this trade using current station, ship, and quantity."
+                  }
+                  placement="top"
                 >
-                  {tradeLoading ? "Submitting..." : "Execute trade"}
-                </button>
+                  <button
+                    type="button"
+                    onClick={handleTrade}
+                    disabled={tradeLoading}
+                  >
+                    {tradeLoading ? "Submitting..." : "Execute trade"}
+                  </button>
+                </Tooltip>
+
+                <div className={styles.cargoPanel}>
+                  <div className={styles.cargoHeader}>
+                    <p className={styles.label}>Ship Cargo</p>
+                    {shipCargo ? (
+                      <Tooltip
+                        content={
+                          shipCargo.cargo_capacity <= 0
+                            ? "This ship has no cargo hold. Install one before buying goods."
+                            : "Cargo hold is available and can store traded commodities."
+                        }
+                        placement="top"
+                      >
+                        <span
+                          className={`${styles.cargoChip} ${shipCargo.cargo_capacity <= 0
+                            ? styles.cargoChipNoHold
+                            : styles.cargoChipReady
+                            }`}
+                        >
+                          {shipCargo.cargo_capacity <= 0 ? "No Hold" : "Ready"}
+                        </span>
+                      </Tooltip>
+                    ) : null}
+                  </div>
+                  {cargoLoading ? (
+                    <DataState
+                      variant="loading"
+                      title="Loading cargo"
+                      description="Syncing current hold usage."
+                    />
+                  ) : cargoError ? (
+                    <DataState
+                      variant="error"
+                      title="Cargo unavailable"
+                      description={cargoError}
+                      actionLabel="Retry"
+                      onAction={() => {
+                        void fetchShipCargo({ silent: false });
+                      }}
+                    />
+                  ) : shipCargo ? (
+                    <>
+                      <p>
+                        {shipCargo.cargo_used}/{shipCargo.cargo_capacity} used
+                      </p>
+                      <p>{shipCargo.cargo_free} free</p>
+                      <div className={styles.cargoItems}>
+                        {shipCargo.cargo_capacity <= 0 ? (
+                          <p>No cargo hold installed.</p>
+                        ) : shipCargo.items.length ? (
+                          shipCargo.items.map((item) => (
+                            <p key={item.commodity_id}>
+                              {item.commodity_name}: {item.quantity}
+                            </p>
+                          ))
+                        ) : (
+                          <p>Hold empty.</p>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <DataState
+                      variant="empty"
+                      title="No cargo data"
+                      description="Refresh cargo to load hold details for this ship."
+                      actionLabel="Refresh"
+                      onAction={() => {
+                        void fetchShipCargo({ silent: false });
+                      }}
+                    />
+                  )}
+                </div>
 
                 <div className={styles.tradeStatus}>
                   <p className={styles.label}>Market Status</p>
                   <p>{tradeStatus}</p>
                 </div>
               </div>
+            </div>
+          </section>
+        ) : null}
+
+        {token ? (
+          <section className={styles.storyPanel}>
+            <div className={styles.storyHeader}>
+              <div>
+                <p className={styles.label}>Story Log</p>
+                <h3>Session timeline</h3>
+              </div>
+              <Tooltip
+                content="Creates a new story session at the selected station."
+                placement="top"
+              >
+                <button type="button" onClick={handleStoryStart}>
+                  Start story at station
+                </button>
+              </Tooltip>
+            </div>
+            <div className={styles.storyList}>
+              {storyLoading ? (
+                <DataState
+                  variant="loading"
+                  title="Loading sessions"
+                  description="Retrieving your latest story timeline."
+                />
+              ) : storyError ? (
+                <DataState
+                  variant="error"
+                  title="Story sessions unavailable"
+                  description={storyError}
+                  actionLabel="Retry"
+                  onAction={() => {
+                    void fetchStorySessions();
+                  }}
+                />
+              ) : storySessions.length ? (
+                storySessions.map((session) => (
+                  <div key={session.id} className={styles.storyItem}>
+                    <p>Session #{session.id}</p>
+                    <span>
+                      {session.location_type} {session.location_id} · {session.status}
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <DataState
+                  variant="empty"
+                  title="No story sessions yet"
+                  description="Start a story at the selected station to begin your timeline."
+                  actionLabel="Start story"
+                  onAction={() => {
+                    void handleStoryStart();
+                  }}
+                />
+              )}
             </div>
           </section>
         ) : null}

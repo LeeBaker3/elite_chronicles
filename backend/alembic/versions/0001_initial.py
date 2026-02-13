@@ -169,6 +169,8 @@ def upgrade() -> None:
         sa.Column("energy_current", sa.Integer(), nullable=False),
         sa.Column("fuel_cap", sa.Integer(), nullable=False),
         sa.Column("fuel_current", sa.Integer(), nullable=False),
+        sa.Column("cargo_capacity", sa.Integer(),
+                  nullable=False, server_default="0"),
         sa.Column("position_x", sa.Integer(),
                   nullable=False, server_default="0"),
         sa.Column("position_y", sa.Integer(),
@@ -193,6 +195,24 @@ def upgrade() -> None:
     op.create_index("ships_owner_user_id_idx", "ships", ["owner_user_id"])
 
     op.create_table(
+        "ship_cargo",
+        sa.Column("id", sa.BigInteger(), primary_key=True),
+        sa.Column("ship_id", sa.BigInteger(), sa.ForeignKey(
+            "ships.id"), nullable=False),
+        sa.Column("commodity_id", sa.BigInteger(), sa.ForeignKey(
+            "commodities.id"), nullable=False),
+        sa.Column("quantity", sa.Integer(),
+                  nullable=False, server_default="0"),
+        sa.Column("updated_at", sa.DateTime(timezone=True),
+                  server_default=sa.func.now()),
+        sa.Column("version", sa.BigInteger(),
+                  nullable=False, server_default="0"),
+        sa.UniqueConstraint("ship_id", "commodity_id",
+                            name="ship_cargo_ship_id_commodity_id_key"),
+    )
+    op.create_index("ship_cargo_ship_id_idx", "ship_cargo", ["ship_id"])
+
+    op.create_table(
         "story_sessions",
         sa.Column("id", sa.BigInteger(), primary_key=True),
         sa.Column("user_id", sa.BigInteger(), sa.ForeignKey(
@@ -211,6 +231,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.drop_index("ship_cargo_ship_id_idx", table_name="ship_cargo")
+    op.drop_table("ship_cargo")
     op.drop_index("story_sessions_user_id_idx", table_name="story_sessions")
     op.drop_table("story_sessions")
     op.drop_index("ships_owner_user_id_idx", table_name="ships")
