@@ -38,6 +38,26 @@ type ShipCargoData = {
 type StationOption = {
   id: number;
   name: string;
+  system_id: number;
+};
+
+type CommanderProfile = {
+  id: number;
+  email: string;
+  username: string;
+  role: string;
+  credits: number;
+  is_alive: boolean;
+  location_type: string | null;
+  location_id: number | null;
+};
+
+type MarketStationSummary = {
+  station_id: number;
+  station_name: string;
+  commodity_count: number;
+  scarcity_count: number;
+  last_inventory_update: string | null;
 };
 
 type StorySessionItem = {
@@ -75,6 +95,16 @@ export default function Home() {
   const [storySessions, setStorySessions] = useState<StorySessionItem[]>([]);
   const [storyLoading, setStoryLoading] = useState(false);
   const [storyError, setStoryError] = useState<string | null>(null);
+  const [commanderProfile, setCommanderProfile] = useState<CommanderProfile | null>(null);
+  const [commanderLoading, setCommanderLoading] = useState(false);
+  const [commanderError, setCommanderError] = useState<string | null>(null);
+  const [marketSummary, setMarketSummary] = useState<MarketStationSummary[]>([]);
+  const [marketSummaryLoading, setMarketSummaryLoading] = useState(false);
+  const [marketSummaryError, setMarketSummaryError] = useState<string | null>(null);
+  const [shipOpsLoading, setShipOpsLoading] = useState(false);
+  const [shipOpsStatus, setShipOpsStatus] = useState("Ship operations idle.");
+  const [dockStationId, setDockStationId] = useState("1");
+  const [refuelAmount, setRefuelAmount] = useState("40");
 
   useEffect(() => {
     const stored = window.localStorage.getItem("elite_token");
@@ -145,6 +175,9 @@ export default function Home() {
     setShipCargo(null);
     setStorySessions([]);
     setStationOptions([]);
+    setCommanderProfile(null);
+    setMarketSummary([]);
+    setMarketSummaryError(null);
   };
 
   const handleSwitchAccount = () => {
@@ -285,6 +318,30 @@ export default function Home() {
     }
   }, [showToast, token]);
 
+  const fetchCommanderProfile = useCallback(async () => {
+    if (!token) return;
+    setCommanderLoading(true);
+    setCommanderError(null);
+    try {
+      const response = await fetch(`${API_BASE}/api/players/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        const message = data?.error?.message || "Unable to load commander state.";
+        setCommanderProfile(null);
+        setCommanderError(message);
+        return;
+      }
+      setCommanderProfile(data);
+    } catch {
+      setCommanderProfile(null);
+      setCommanderError("Unable to load commander state.");
+    } finally {
+      setCommanderLoading(false);
+    }
+  }, [token]);
+
   const handleStoryStart = async () => {
     if (!token || !stationId.trim()) return;
     try {
@@ -370,6 +427,91 @@ export default function Home() {
     }
   }, [shipId, showToast]);
 
+  const selectedStation = useMemo(
+    () => stationOptions.find((station) => String(station.id) === stationId) ?? null,
+    [stationId, stationOptions]
+  );
+
+  const selectedSystemId = selectedStation?.system_id ?? null;
+
+  const fetchMarketSummary = useCallback(async () => {
+    if (!selectedSystemId) {
+      setMarketSummary([]);
+      return;
+    }
+    setMarketSummaryLoading(true);
+    setMarketSummaryError(null);
+    try {
+      const response = await fetch(`${API_BASE}/api/markets/${selectedSystemId}/summary`);
+      const data = await response.json();
+      if (!response.ok) {
+        const message = data?.error?.message || "Unable to load market summary.";
+        setMarketSummary([]);
+        setMarketSummaryError(message);
+        return;
+      }
+      setMarketSummary(data);
+    } catch {
+      setMarketSummary([]);
+      setMarketSummaryError("Unable to load market summary.");
+    } finally {
+      setMarketSummaryLoading(false);
+    }
+  }, [selectedSystemId]);
+
+  const handleShipOperation = async (
+    operation: "dock" | "undock" | "refuel"
+  ) => {
+    if (!token) return;
+    const parsedShipId = Number(shipId);
+    if (!Number.isInteger(parsedShipId) || parsedShipId <= 0) {
+      setShipOpsStatus("Ship ID must be a valid positive number.");
+      return;
+    }
+
+    setShipOpsLoading(true);
+    try {
+      const endpoint =
+        operation === "dock"
+          ? `${API_BASE}/api/ships/${parsedShipId}/dock`
+          : operation === "undock"
+            ? `${API_BASE}/api/ships/${parsedShipId}/undock`
+            : `${API_BASE}/api/ships/${parsedShipId}/refuel`;
+
+      const payload =
+        operation === "dock"
+          ? { station_id: Number(dockStationId) }
+          : operation === "refuel"
+            ? { amount: Number(refuelAmount) }
+            : undefined;
+
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: payload ? JSON.stringify(payload) : "{}",
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        const message = data?.error?.message || `Unable to ${operation} ship.`;
+        setShipOpsStatus(message);
+        showToast({ message, variant: "error" });
+        return;
+      }
+      setShipOpsStatus(`Ship ${operation} operation successful.`);
+      showToast({ message: `Ship ${operation} operation successful.`, variant: "success" });
+      void fetchShipCargo({ silent: true });
+    } catch {
+      const message = `Unable to ${operation} ship.`;
+      setShipOpsStatus(message);
+      showToast({ message, variant: "error" });
+    } finally {
+      setShipOpsLoading(false);
+    }
+  };
+
   useEffect(() => {
     void fetchInventory();
   }, [fetchInventory]);
@@ -378,11 +520,13 @@ export default function Home() {
     if (!token) {
       setStationOptions([]);
       setStorySessions([]);
+      setCommanderProfile(null);
       return;
     }
     void fetchStations();
     void fetchStorySessions();
-  }, [fetchStations, fetchStorySessions, token]);
+    void fetchCommanderProfile();
+  }, [fetchCommanderProfile, fetchStations, fetchStorySessions, token]);
 
   useEffect(() => {
     if (!token) {
@@ -392,6 +536,16 @@ export default function Home() {
     }
     void fetchShipCargo({ silent: true });
   }, [fetchShipCargo, token]);
+
+  useEffect(() => {
+    void fetchMarketSummary();
+  }, [fetchMarketSummary]);
+
+  useEffect(() => {
+    if (selectedStation) {
+      setDockStationId(String(selectedStation.id));
+    }
+  }, [selectedStation]);
 
   const handleTrade = async () => {
     if (!stationId.trim()) return;
@@ -589,6 +743,149 @@ export default function Home() {
               </div>
             </div>
           </div>
+        ) : null}
+
+        {token ? (
+          <section className={styles.opsPanel}>
+            <div>
+              <p className={styles.label}>Commander State</p>
+              <h3>Flight manifest</h3>
+            </div>
+            {commanderLoading ? (
+              <DataState
+                variant="loading"
+                title="Loading commander state"
+                description="Retrieving authenticated player profile."
+              />
+            ) : commanderError ? (
+              <DataState
+                variant="error"
+                title="Commander state unavailable"
+                description={commanderError}
+                actionLabel="Retry"
+                onAction={() => {
+                  void fetchCommanderProfile();
+                }}
+              />
+            ) : commanderProfile ? (
+              <div className={styles.metaGrid}>
+                <p>{commanderProfile.username}</p>
+                <span>{commanderProfile.email}</span>
+                <p>Role: {commanderProfile.role}</p>
+                <p>Credits: {commanderProfile.credits}</p>
+                <p>
+                  Location: {commanderProfile.location_type ?? "-"} {commanderProfile.location_id ?? ""}
+                </p>
+              </div>
+            ) : (
+              <DataState
+                variant="empty"
+                title="No commander state"
+                description="Authenticate and retry to load player profile."
+                actionLabel="Refresh"
+                onAction={() => {
+                  void fetchCommanderProfile();
+                }}
+              />
+            )}
+
+            <div className={styles.shipOpsControls}>
+              <label>
+                <span>Dock Station</span>
+                <select
+                  value={dockStationId}
+                  onChange={(event) => setDockStationId(event.target.value)}
+                >
+                  {stationOptions.map((station) => (
+                    <option key={station.id} value={station.id}>
+                      {station.name} (#{station.id})
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Refuel Amount</span>
+                <input
+                  type="number"
+                  min="1"
+                  value={refuelAmount}
+                  onChange={(event) => setRefuelAmount(event.target.value)}
+                />
+              </label>
+              <div className={styles.shipOpsActions}>
+                <button
+                  type="button"
+                  disabled={shipOpsLoading}
+                  onClick={() => {
+                    void handleShipOperation("dock");
+                  }}
+                >
+                  Dock
+                </button>
+                <button
+                  type="button"
+                  disabled={shipOpsLoading}
+                  onClick={() => {
+                    void handleShipOperation("undock");
+                  }}
+                >
+                  Undock
+                </button>
+                <button
+                  type="button"
+                  disabled={shipOpsLoading}
+                  onClick={() => {
+                    void handleShipOperation("refuel");
+                  }}
+                >
+                  Refuel
+                </button>
+              </div>
+              <p className={styles.shipOpsStatus}>{shipOpsStatus}</p>
+            </div>
+          </section>
+        ) : null}
+
+        {token ? (
+          <section className={styles.summaryPanel}>
+            <div>
+              <p className={styles.label}>System Market Summary</p>
+              <h3>{selectedSystemId ? `System #${selectedSystemId}` : "No system selected"}</h3>
+            </div>
+            <div className={styles.summaryList}>
+              {marketSummaryLoading ? (
+                <DataState
+                  variant="loading"
+                  title="Loading market summary"
+                  description="Aggregating station market conditions."
+                />
+              ) : marketSummaryError ? (
+                <DataState
+                  variant="error"
+                  title="Market summary unavailable"
+                  description={marketSummaryError}
+                  actionLabel="Retry"
+                  onAction={() => {
+                    void fetchMarketSummary();
+                  }}
+                />
+              ) : marketSummary.length ? (
+                marketSummary.map((item) => (
+                  <div key={item.station_id} className={styles.summaryItem}>
+                    <p>{item.station_name}</p>
+                    <span>Commodities: {item.commodity_count}</span>
+                    <span>Scarcity signals: {item.scarcity_count}</span>
+                  </div>
+                ))
+              ) : (
+                <DataState
+                  variant="empty"
+                  title="No market summary"
+                  description="Select a station to determine the active system summary."
+                />
+              )}
+            </div>
+          </section>
         ) : null}
 
         {token ? (

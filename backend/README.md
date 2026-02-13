@@ -26,3 +26,11 @@ uvicorn app.main:app --reload
 
 - `POST /api/stations/{station_id}/trade` accepts optional `ship_id` and enforces cargo capacity/cargo availability when provided.
 - `GET /api/ships/{ship_id}/cargo` returns cargo capacity, used/free totals, and current cargo contents.
+
+## Core Systems Notes
+
+- `GET /api/players/me` returns authenticated commander profile/state fields.
+- `POST /api/ships/{ship_id}/dock` docks a user-owned ship at a target station.
+- `POST /api/ships/{ship_id}/undock` transitions a docked ship to in-space.
+- `POST /api/ships/{ship_id}/refuel` refuels a docked ship (full or partial via `amount`).
+- `GET /api/markets/{system_id}/summary` returns per-station aggregate market summary rows.

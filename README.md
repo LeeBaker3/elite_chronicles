@@ -15,3 +15,4 @@ Command clearance console for Elite Chronicles.
 - UI foundations checklist: [prd/ui-foundations-checklist.md](prd/ui-foundations-checklist.md)
 - UI foundations implementation plan: [prd/ui-foundations-implementation-plan.md](prd/ui-foundations-implementation-plan.md)
 - UI foundations migration notes: [prd/ui-foundations-migration-notes.md](prd/ui-foundations-migration-notes.md)
+- Next implementation batch plan: [prd/batch-01-core-systems-plan.md](prd/batch-01-core-systems-plan.md)

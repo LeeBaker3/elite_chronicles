@@ -14,7 +14,14 @@ router = APIRouter()
 @router.get("", response_model=list[StationSummary])
 def list_stations(db: Session = Depends(get_db)):
     stations = db.query(Station).order_by(Station.id.asc()).all()
-    return [StationSummary(id=station.id, name=station.name) for station in stations]
+    return [
+        StationSummary(
+            id=station.id,
+            name=station.name,
+            system_id=station.system_id,
+        )
+        for station in stations
+    ]
 
 
 @router.get("/{station_id}/inventory", response_model=list[InventoryItem])

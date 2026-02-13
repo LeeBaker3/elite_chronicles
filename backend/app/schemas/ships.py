@@ -1,6 +1,14 @@
 from pydantic import BaseModel
 
 
+class DockRequest(BaseModel):
+    station_id: int
+
+
+class RefuelRequest(BaseModel):
+    amount: int | None = None
+
+
 class CargoItem(BaseModel):
     commodity_id: int
     commodity_name: str
@@ -22,5 +30,7 @@ class ShipResponse(BaseModel):
     shields_current: int
     energy_current: int
     fuel_current: int
+    fuel_cap: int
     cargo_capacity: int
     status: str
+    docked_station_id: int | None

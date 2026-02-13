@@ -723,6 +723,9 @@ Phase 4: AI Story Integration
 Phase 5: Expanded Universe
 - More stations, factions, missions, and tuning.
 
+15.1 Next Execution Batch
+- See [batch-01-core-systems-plan.md](batch-01-core-systems-plan.md) for scoped implementation sequencing and acceptance criteria.
+
 16. Acceptance Criteria (High Level)
 - Players can register, login, and persist their ship state.
 - Players can trade at a station and see inventory update.
