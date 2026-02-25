@@ -1,14 +1,17 @@
-from app.db.base import Base
 from app.core.config import settings
-from logging.config import fileConfig
+from app.db.base import Base
 import os
 import sys
+from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config, pool
 
 from alembic import context
 
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+BACKEND_ROOT = os.path.dirname(os.path.dirname(__file__))
+if BACKEND_ROOT not in sys.path:
+    sys.path.append(BACKEND_ROOT)
+
 
 from app import models  # noqa: F401
 

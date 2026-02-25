@@ -7,36 +7,45 @@
 }
 
 .main {
-  width: min(1100px, 100%);
+  width: min(1360px, 100%);
   display: grid;
-  gap: 32px;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 20px;
+  grid-template-columns: minmax(420px, 1.6fr) minmax(320px, 1fr);
   align-items: start;
 }
 
-.hero {
-  display: grid;
-  gap: 16px;
-  align-content: start;
+.modeMainPanel {
+  grid-column: 1 / -1;
+  min-height: 560px;
 }
 
-.hero h1 {
-  font-size: clamp(2.3rem, 2.6vw, 3rem);
-  line-height: 1.05;
-  letter-spacing: -0.04em;
+.modeContextStamp {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-family: var(--font-mono), ui-monospace, monospace;
+}
+
+.hero {
+  display: flex;
+  align-items: center;
+  min-height: 56px;
+  padding: 0;
 }
 
 .kicker {
   text-transform: uppercase;
   letter-spacing: 0.4em;
-  font-size: 0.7rem;
+  font-size: 0.82rem;
   color: var(--muted);
 }
 
 .subhead {
   color: var(--ink-dim);
-  font-size: 1.05rem;
-  max-width: 32ch;
+  font-size: 0.98rem;
+  max-width: 50ch;
 }
 
 .signalRow {
@@ -80,33 +89,47 @@
 
 .authChip {
   display: grid;
-  gap: 12px;
-  align-content: start;
-  padding: 16px 18px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: "identity token actions";
+  align-items: center;
+  gap: 8px 12px;
+  padding: 12px 14px;
   border-radius: 18px;
   border: 1px solid var(--edge);
   background: rgba(7, 14, 24, 0.72);
   box-shadow: 0 16px 32px rgba(0, 0, 0, 0.25);
-  max-width: 260px;
   width: 100%;
-  justify-self: start;
+  justify-self: stretch;
+  min-height: 56px;
+}
+
+.authInline {
+  grid-area: identity;
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  white-space: nowrap;
 }
 
 .chipTitle {
-  font-size: 1.1rem;
-  margin-top: 4px;
+  font-size: 1rem;
+  margin-top: 2px;
 }
 
 .chipMeta {
+  grid-area: token;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  justify-content: flex-start;
+  gap: 8px;
   font-size: 0.8rem;
   color: var(--muted);
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .chipMeta code {
+  display: inline-block;
   font-family: var(--font-mono), ui-monospace, monospace;
   font-size: 0.75rem;
   letter-spacing: 0.08em;
@@ -115,6 +138,21 @@
   padding: 6px 10px;
   border-radius: 999px;
   border: 1px solid var(--edge);
+  white-space: nowrap;
+  min-width: 0;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.authActions {
+  grid-area: actions;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
 }
 
 .authChip button {
@@ -122,8 +160,27 @@
   background: transparent;
   color: var(--ink);
   border-radius: 999px;
-  padding: 10px 16px;
+  padding: 9px 14px;
   cursor: pointer;
+  white-space: nowrap;
+}
+
+@media (max-width: 1120px) {
+  .authChip {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas: "identity token actions";
+    gap: 8px 10px;
+    align-items: center;
+  }
+
+  .authActions {
+    justify-content: flex-end;
+    flex-wrap: nowrap;
+  }
+
+  .chipMeta code {
+    max-width: 96px;
+  }
 }
 
 .authOverlay {
@@ -134,6 +191,48 @@
   place-items: center;
   z-index: 20;
   backdrop-filter: blur(6px);
+}
+
+.devOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(3, 6, 12, 0.72);
+  display: grid;
+  place-items: center;
+  z-index: 30;
+  backdrop-filter: blur(8px);
+  padding: 20px;
+}
+
+.devDialog {
+  width: min(980px, 96vw);
+  max-height: min(88vh, 920px);
+  overflow-y: auto;
+  background: rgba(7, 14, 24, 0.94);
+  border-radius: 22px;
+  border: 1px solid var(--edge);
+  padding: 24px;
+  display: grid;
+  gap: 18px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.42);
+}
+
+.devHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.devHeader h3 {
+  font-size: 1.2rem;
+  margin-top: 6px;
+}
+
+.devContent {
+  display: grid;
+  gap: 16px;
 }
 
 .authDialog {
@@ -255,40 +354,70 @@
 
 .tradeGrid {
   display: grid;
-  grid-template-columns: minmax(240px, 1.4fr) minmax(220px, 0.8fr);
+  grid-template-columns: minmax(360px, 1.6fr) minmax(250px, 0.9fr);
   gap: 20px;
 }
 
-.inventoryList {
+.tradeTerminal {
+  border: 1px solid var(--edge);
+  border-radius: 16px;
+  background: rgba(8, 16, 30, 0.72);
+  padding: 12px;
   display: grid;
   gap: 12px;
 }
 
-.inventoryItem,
-.inventoryItemActive {
-  display: flex;
-  justify-content: space-between;
+.tableScroller {
+  display: grid;
+  gap: 8px;
+}
+
+.tradeTableHeader,
+.tradeRow,
+.tradeRowActive {
+  display: grid;
+  grid-template-columns: minmax(150px, 1.8fr) 0.8fr 0.8fr 0.8fr 0.8fr;
+  gap: 10px;
   align-items: center;
-  border-radius: 16px;
+}
+
+.tradeTableHeader {
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(7, 14, 24, 0.86);
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.tradeTableBody {
+  display: grid;
+  gap: 6px;
+}
+
+.tradeRow,
+.tradeRowActive {
   border: 1px solid var(--edge);
-  padding: 14px 16px;
+  border-radius: 12px;
+  padding: 10px;
   background: rgba(8, 16, 30, 0.8);
   color: var(--ink);
   text-align: left;
   cursor: pointer;
   transition: border 0.2s ease, transform 0.2s ease;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.9rem;
 }
 
-.inventoryItemActive {
+.tradeRowActive {
   border-color: rgba(255, 179, 71, 0.7);
   box-shadow: 0 10px 24px rgba(255, 179, 71, 0.2);
   transform: translateY(-1px);
 }
 
-.inventoryItem span,
-.inventoryItemActive span {
-  color: var(--muted);
-  font-size: 0.85rem;
+.productCell {
+  color: var(--ink);
 }
 
 .tradeControls {
@@ -362,6 +491,44 @@
   gap: 6px;
   font-size: 0.95rem;
   color: var(--ok);
+}
+
+.selectedCommodityPanel {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  background: rgba(8, 16, 30, 0.72);
+  padding: 10px;
+}
+
+.selectedCommodityPanel span {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.tradeBottomStrip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  background: rgba(7, 14, 24, 0.76);
+  padding: 10px;
+}
+
+.stripItem {
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  background: rgba(8, 16, 30, 0.72);
+  padding: 8px 10px;
+  display: grid;
+  gap: 4px;
+}
+
+.stripItem p:last-child {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.88rem;
 }
 
 .cargoPanel {
@@ -508,7 +675,297 @@
   backdrop-filter: blur(10px);
 }
 
+.modeShell {
+  display: grid;
+  gap: 10px;
+  padding: 16px 18px;
+  border-radius: 18px;
+  border: 1px solid var(--edge);
+  background: rgba(7, 14, 24, 0.72);
+}
+
+.chronoPanel {
+  display: grid;
+  gap: 10px;
+  padding: 16px 18px;
+  border-radius: 18px;
+  border: 1px solid var(--edge);
+  background: rgba(7, 14, 24, 0.72);
+}
+
+.chronoPanel h3 {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.98rem;
+  margin-top: 6px;
+}
+
+.chronoMeta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--edge);
+}
+
+.chronoMeta span {
+  color: var(--muted);
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.chronoMeta strong {
+  font-size: 0.82rem;
+  color: var(--ink);
+  font-family: var(--font-mono), ui-monospace, monospace;
+}
+
+.modeTabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.modeTab,
+.modeTabActive {
+  border: 1px solid var(--edge);
+  background: transparent;
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 8px 14px;
+  cursor: pointer;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.modeTabActive {
+  color: #06111f;
+  background: var(--accent);
+  border-color: rgba(255, 179, 71, 0.65);
+  box-shadow: 0 8px 20px rgba(255, 179, 71, 0.22);
+}
+
+.modePlaceholder {
+  display: grid;
+  gap: 12px;
+}
+
+.commsPanel {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 14px;
+  padding: 22px 24px;
+  border-radius: 20px;
+  border: 1px solid var(--edge);
+  background: rgba(7, 14, 24, 0.72);
+  backdrop-filter: blur(10px);
+}
+
+.commsHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.commsHeaderActions {
+  display: flex;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.commsUnreadLabel {
+  color: var(--muted);
+  font-size: 0.85rem;
+  align-self: center;
+}
+
+.commsGrid {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.channelList {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.channelItem,
+.channelItemActive {
+  display: grid;
+  gap: 4px;
+  text-align: left;
+  border-radius: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--edge);
+  background: rgba(6, 12, 22, 0.75);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.channelItem p,
+.channelItemActive p {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+.channelItem span,
+.channelItemActive span {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+}
+
+.channelItemActive {
+  border-color: rgba(255, 179, 71, 0.65);
+  box-shadow: 0 0 0 1px rgba(255, 179, 71, 0.24);
+}
+
+.messagePane {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  background: rgba(6, 12, 22, 0.76);
+  padding: 12px;
+}
+
+.messageMeta {
+  display: grid;
+  gap: 4px;
+  border-bottom: 1px solid var(--edge);
+  padding-bottom: 8px;
+}
+
+.messageMeta p,
+.messageMeta span {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  overflow-wrap: anywhere;
+}
+
+.messageList {
+  display: grid;
+  gap: 8px;
+  max-height: 300px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.messageInbound,
+.messageOutbound {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+
+.messageInbound {
+  background: rgba(8, 16, 30, 0.72);
+}
+
+.messageOutbound {
+  background: rgba(44, 26, 8, 0.5);
+  border-color: rgba(255, 179, 71, 0.35);
+}
+
+.messageInbound p,
+.messageOutbound p {
+  margin: 0;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+}
+
+.messageInbound span,
+.messageOutbound span {
+  font-size: 0.95rem;
+}
+
+.messageInbound small,
+.messageOutbound small {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.composerRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.composerRow label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.composerRow label span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+
+.composerRow input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  background: var(--panel-strong);
+  color: var(--ink);
+  padding: 10px 12px;
+}
+
+.composerRow button {
+  white-space: nowrap;
+  border: none;
+  border-radius: 999px;
+  padding: 10px 16px;
+  font-weight: 600;
+  cursor: pointer;
+  color: #081425;
+  background: linear-gradient(120deg, var(--accent), var(--accent-strong));
+}
+
+.composerRow button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+@media (max-width: 940px) {
+  .commsPanel {
+    padding: 18px;
+  }
+
+  .commsGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .messageMeta {
+    gap: 6px;
+  }
+
+  .composerRow {
+    grid-template-columns: 1fr;
+  }
+}
+
 .storyPanel {
+  grid-column: 1 / -1;
   display: grid;
   gap: 14px;
   padding: 22px 24px;
@@ -520,6 +977,7 @@
 
 .opsPanel,
 .summaryPanel {
+  grid-column: 1 / -1;
   display: grid;
   gap: 14px;
   padding: 22px 24px;
@@ -527,6 +985,133 @@
   border: 1px solid var(--edge);
   background: rgba(7, 14, 24, 0.72);
   backdrop-filter: blur(10px);
+}
+
+.tickPanel,
+.logsPanel {
+  display: grid;
+  gap: 14px;
+  padding: 22px 24px;
+  border-radius: 20px;
+  border: 1px solid var(--edge);
+  background: rgba(7, 14, 24, 0.72);
+  backdrop-filter: blur(10px);
+}
+
+.tickControls,
+.logsControls {
+  display: grid;
+  gap: 10px;
+}
+
+.tickControls label,
+.logsControls label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+}
+
+.tickControls input,
+.logsControls input,
+.logsControls select {
+  background: var(--panel-strong);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  padding: 10px 12px;
+  color: var(--ink);
+}
+
+.tickActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.tickActions button,
+.logsControls button {
+  border: none;
+  border-radius: 999px;
+  padding: 10px 16px;
+  font-weight: 600;
+  cursor: pointer;
+  color: #081425;
+  background: linear-gradient(120deg, var(--accent), var(--accent-strong));
+}
+
+.tickActions button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.tickStatus {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.logsList {
+  display: grid;
+  gap: 8px;
+}
+
+.logItem {
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  background: rgba(8, 16, 30, 0.72);
+  padding: 10px 12px;
+  display: grid;
+  gap: 4px;
+}
+
+.logItem p {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.logItem span {
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+
+.adminUserActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.adminUserActions label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+
+.adminUserActions select {
+  background: var(--panel-strong);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  padding: 8px 10px;
+  color: var(--ink);
+}
+
+.adminUserActions button {
+  border: none;
+  border-radius: 999px;
+  padding: 8px 12px;
+  font-weight: 600;
+  cursor: pointer;
+  color: #081425;
+  background: linear-gradient(120deg, var(--accent), var(--accent-strong));
+}
+
+.adminUserActions button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .metaGrid {
@@ -586,6 +1171,2472 @@
   font-size: 0.9rem;
 }
 
+.shipOpsLogPanel {
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  background: rgba(8, 16, 30, 0.72);
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.shipOpsLogHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.shipOpsLogList {
+  display: grid;
+  gap: 8px;
+}
+
+.shipOpsFilterRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.shipOpsFilter,
+.shipOpsFilterActive {
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+}
+
+.shipOpsFilter {
+  color: var(--muted);
+  background: rgba(6, 12, 22, 0.76);
+}
+
+.shipOpsFilterActive {
+  color: #06111f;
+  background: var(--accent);
+  border-color: rgba(255, 179, 71, 0.65);
+}
+
+.shipOpsLogItem {
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  background: rgba(6, 12, 22, 0.76);
+  padding: 10px;
+  display: grid;
+  gap: 4px;
+}
+
+.shipOpsLogItem p {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.missionSectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.missionBoardActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.missionList {
+  display: grid;
+  gap: 8px;
+}
+
+.missionItem {
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  background: rgba(6, 12, 22, 0.76);
+  padding: 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.missionItem p {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.86rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.missionItem span,
+.missionItem small {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.missionActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.missionActions button {
+  border: none;
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-weight: 600;
+  cursor: pointer;
+  color: #081425;
+  background: linear-gradient(120deg, var(--accent), var(--accent-strong));
+}
+
+.missionActions button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.shipOpsLogItem span,
+.shipOpsLogItem small {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.flightPanel {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 14px;
+  padding: 22px 24px;
+  border-radius: 20px;
+  border: 1px solid var(--edge);
+  background: rgba(7, 14, 24, 0.72);
+  backdrop-filter: blur(10px);
+}
+
+.flightHudGrid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(240px, 0.85fr) minmax(360px, 1.35fr) minmax(260px, 1fr);
+}
+
+.flightConsoleShell {
+  display: grid;
+  gap: 8px;
+}
+
+.flightViewport {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  min-height: 620px;
+  padding: 16px;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  background:
+    radial-gradient(circle at 24% 38%, rgba(255, 140, 26, 0.22), transparent 45%),
+    radial-gradient(circle at 75% 55%, rgba(255, 140, 26, 0.12), transparent 42%),
+    rgba(5, 10, 18, 0.92);
+}
+
+.flightImpactFlash {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 8;
+}
+
+.flightImpactFlashGlancing {
+  animation: flight-impact-flash-glancing 260ms ease-out;
+}
+
+.flightImpactFlashCritical {
+  animation: flight-impact-flash-critical 420ms ease-out;
+}
+
+@keyframes flight-impact-flash-glancing {
+  0% {
+    opacity: 0.62;
+    background:
+      radial-gradient(circle at 50% 50%, rgba(255, 179, 71, 0.52), rgba(255, 179, 71, 0) 62%),
+      linear-gradient(180deg, rgba(255, 196, 92, 0.14), rgba(255, 196, 92, 0));
+    box-shadow: inset 0 0 0 1px rgba(255, 179, 71, 0.45);
+  }
+
+  100% {
+    opacity: 0;
+    background:
+      radial-gradient(circle at 50% 50%, rgba(255, 179, 71, 0), rgba(255, 179, 71, 0)),
+      linear-gradient(180deg, rgba(255, 196, 92, 0), rgba(255, 196, 92, 0));
+    box-shadow: inset 0 0 0 1px rgba(255, 179, 71, 0);
+  }
+}
+
+@keyframes flight-impact-flash-critical {
+  0% {
+    opacity: 0.82;
+    background:
+      radial-gradient(circle at 50% 50%, rgba(255, 107, 107, 0.62), rgba(255, 107, 107, 0) 64%),
+      linear-gradient(180deg, rgba(255, 107, 107, 0.2), rgba(255, 107, 107, 0));
+    box-shadow: inset 0 0 0 1px rgba(255, 107, 107, 0.62);
+  }
+
+  100% {
+    opacity: 0;
+    background:
+      radial-gradient(circle at 50% 50%, rgba(255, 107, 107, 0), rgba(255, 107, 107, 0)),
+      linear-gradient(180deg, rgba(255, 107, 107, 0), rgba(255, 107, 107, 0));
+    box-shadow: inset 0 0 0 1px rgba(255, 107, 107, 0);
+  }
+}
+
+.flightContextPrimaryImpactGlancing {
+  animation: flight-impact-shake-glancing 260ms ease-out;
+}
+
+.flightContextPrimaryImpactCritical {
+  animation: flight-impact-shake-critical 420ms ease-out;
+}
+
+@keyframes flight-impact-shake-glancing {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+
+  20% {
+    transform: translate3d(-2px, 1px, 0);
+  }
+
+  40% {
+    transform: translate3d(2px, -1px, 0);
+  }
+
+  60% {
+    transform: translate3d(-1px, 1px, 0);
+  }
+
+  80% {
+    transform: translate3d(1px, -1px, 0);
+  }
+
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes flight-impact-shake-critical {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+
+  12% {
+    transform: translate3d(-4px, 2px, 0);
+  }
+
+  24% {
+    transform: translate3d(4px, -2px, 0);
+  }
+
+  36% {
+    transform: translate3d(-3px, 1px, 0);
+  }
+
+  48% {
+    transform: translate3d(3px, -1px, 0);
+  }
+
+  60% {
+    transform: translate3d(-2px, 1px, 0);
+  }
+
+  72% {
+    transform: translate3d(2px, -1px, 0);
+  }
+
+  84% {
+    transform: translate3d(-1px, 0, 0);
+  }
+
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+  .flightContextPrimaryImpactGlancing,
+  .flightContextPrimaryImpactCritical {
+    animation: none;
+  }
+}
+
+.flightViewportHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.flightViewportHead span {
+  color: var(--muted);
+  font-size: 0.74rem;
+  letter-spacing: 0.08em;
+}
+
+.flightSystemName {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  letter-spacing: 0.08em;
+  font-size: 1.1rem;
+}
+
+.flightSystemMeta {
+  display: grid;
+  gap: 3px;
+  font-family: var(--font-mono), ui-monospace, monospace;
+}
+
+.flightSystemMeta p {
+  color: var(--ink);
+}
+
+.flightContextPrimary {
+  border: 1px solid rgba(125, 249, 255, 0.25);
+  border-radius: 12px;
+  background: rgba(6, 14, 26, 0.82);
+  padding: 12px;
+  min-height: 680px;
+  display: grid;
+  gap: 10px;
+  align-content: stretch;
+}
+
+.flightContextPrimarySystem {
+  width: 100%;
+  justify-self: stretch;
+}
+
+.flightContextPrimaryHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.flightContextPrimaryHeader span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.flightContextPrimaryBody {
+  display: grid;
+  gap: 10px;
+  min-height: 0;
+}
+
+.contextMarketBoard {
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  background: rgba(4, 10, 18, 0.86);
+  overflow: hidden;
+}
+
+.contextMarketHeader,
+.contextMarketRow,
+.contextMarketRowActive,
+.contextMarketRowStatic,
+.contextMarketRowPlaceholder {
+  display: grid;
+  grid-template-columns: minmax(110px, 1.1fr) minmax(140px, 1.6fr) minmax(90px, 0.9fr) 0.85fr 1fr 0.7fr 0.7fr;
+  gap: 8px;
+  align-items: center;
+}
+
+.contextMarketHeader span,
+.contextMarketRow span,
+.contextMarketRowActive span,
+.contextMarketRowStatic span,
+.contextMarketRowPlaceholder span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contextMarketHeader {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--edge);
+  color: var(--muted);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.contextMarketBody {
+  display: grid;
+  min-height: 430px;
+  max-height: 430px;
+  overflow-y: auto;
+}
+
+.contextMarketRow,
+.contextMarketRowActive {
+  border: none;
+  border-bottom: 1px solid rgba(20, 38, 62, 0.7);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  padding: 5px 8px;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.contextMarketRowStatic {
+  border-bottom: 1px solid rgba(20, 38, 62, 0.7);
+  color: var(--ink);
+  padding: 5px 8px;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.82rem;
+}
+
+.contextMarketRowActive {
+  background: rgba(255, 179, 71, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(255, 179, 71, 0.45);
+}
+
+.contextMarketRowPlaceholder {
+  border-bottom: 1px solid rgba(20, 38, 62, 0.5);
+  color: var(--muted);
+  padding: 5px 8px;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.82rem;
+  opacity: 0.55;
+}
+
+.contextFieldGrid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.contextFieldGrid label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.contextFieldGrid label span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.contextFieldGrid input,
+.contextFieldGrid select {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  background: var(--panel-strong);
+  color: var(--ink);
+  padding: 8px 10px;
+}
+
+.contextMessagePreview {
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  background: rgba(4, 10, 18, 0.86);
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.contextMessagePreviewMeta {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.contextMessagePreviewMeta span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.contextMessagePreviewMeta strong {
+  color: var(--ink);
+  font-size: 0.8rem;
+  font-family: var(--font-mono), ui-monospace, monospace;
+}
+
+.contextMessagePreview p {
+  color: var(--ink);
+  font-size: 0.86rem;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.systemOverviewGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.systemOverviewColumn {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.systemOverviewColumnRightAligned .contextMessagePreviewMeta {
+  justify-content: flex-end;
+}
+
+.systemOverviewColumnRightAligned .contextMessagePreviewMeta strong {
+  text-align: right;
+}
+
+.systemTableHint {
+  margin: 0;
+}
+
+.systemSelectionSummary {
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  background: rgba(4, 10, 18, 0.86);
+  padding: 8px 10px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.systemLayerControls {
+  display: grid;
+  gap: 6px;
+}
+
+.systemToolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.systemLayerLabel {
+  color: var(--muted);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.systemLayerRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.systemLayerButton,
+.systemLayerButtonActive {
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+
+.systemLayerButton {
+  color: var(--muted);
+  background: rgba(6, 12, 22, 0.76);
+}
+
+.systemLayerButtonActive {
+  color: #06111f;
+  background: var(--accent);
+  border-color: rgba(255, 179, 71, 0.65);
+}
+
+.systemChartControls {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: end;
+  gap: 8px;
+  margin-left: auto;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.systemChartControl {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 0 0 auto;
+}
+
+.systemChartControl span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  white-space: nowrap;
+}
+
+.systemChartControl input,
+.systemChartControl button {
+  width: auto;
+}
+
+.systemChartControl input {
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  background: var(--panel-strong);
+  color: var(--ink);
+  padding: 5px 8px;
+  font-size: 0.76rem;
+  width: 95px;
+  min-width: 95px;
+}
+
+.systemControlCompactButton {
+  border: 1px solid rgba(255, 179, 71, 0.65);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+  color: #06111f;
+  background: var(--accent);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.systemControlCompactButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.systemChartActionButton {
+  appearance: none;
+}
+
+.systemChartActionButton:disabled {
+  border-color: rgba(255, 179, 71, 0.65);
+  background: var(--accent);
+  color: #06111f;
+  opacity: 1;
+}
+
+.systemDataWorkspace {
+  display: grid;
+  grid-template-columns: minmax(420px, 1fr) minmax(360px, 0.9fr);
+  gap: 10px;
+  align-items: stretch;
+}
+
+.systemTableBoard {
+  min-width: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+}
+
+.systemTableBody {
+  min-height: 0;
+  max-height: clamp(280px, 52vh, 500px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.systemTableHeader,
+.systemTableRow,
+.systemTableRowActive,
+.systemTableRowPlaceholder {
+  grid-template-columns: minmax(90px, 0.9fr) minmax(140px, 1.5fr) minmax(120px, 1.2fr) minmax(110px, 0.9fr);
+}
+
+.systemTableHeader {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: rgba(4, 10, 18, 0.96);
+}
+
+.systemTableSortButton {
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  font-size: inherit;
+  font-family: inherit;
+  text-align: left;
+  padding: 0;
+  cursor: pointer;
+}
+
+.systemTableSortButtonActive {
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.systemTableSortButton:hover,
+.systemTableSortButton:focus-visible {
+  color: var(--ink);
+}
+
+.systemChartPanel {
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  background: rgba(4, 10, 18, 0.86);
+  padding: 8px;
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.systemChartPanelHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.systemChartPanelHeader span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.systemChartPanelHeader strong {
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-family: var(--font-mono), ui-monospace, monospace;
+}
+
+.systemChartCanvas {
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  background: rgba(5, 10, 18, 0.9);
+  min-height: 420px;
+  overflow: hidden;
+  position: relative;
+}
+
+.systemChartCanvasStack {
+  position: relative;
+  width: 100%;
+  min-height: 420px;
+  height: 420px;
+}
+
+.systemChartThreeLayer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.systemChartThreeLayer canvas {
+  width: 100% !important;
+  height: 100% !important;
+  display: block;
+}
+
+.systemChartOverlaySvg {
+  position: relative;
+  z-index: 2;
+  pointer-events: auto;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.systemChartBackdrop {
+  fill: rgba(4, 10, 18, 0.96);
+}
+
+.systemChartOrbitRing {
+  fill: none;
+  stroke: rgb(125, 249, 255);
+  stroke-width: 1;
+}
+
+.systemChartCrosshair {
+  stroke: rgba(125, 249, 255, 0.16);
+  stroke-width: 1;
+}
+
+.systemChartPoint {
+  cursor: pointer;
+  stroke: rgba(255, 255, 255, 0.64);
+  stroke-width: 1;
+}
+
+.systemChartPoint:focus-visible {
+  outline: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.systemChartPointStation {
+  stroke: rgba(232, 236, 242, 0.95);
+  stroke-width: 1.35;
+  filter: drop-shadow(0 0 4px rgba(169, 173, 178, 0.45));
+}
+
+.systemChartPointHalo {
+  fill: rgba(125, 249, 255, 0.14);
+}
+
+.systemChartPointHaloStation {
+  fill: rgba(169, 173, 178, 0.24);
+}
+
+.systemChartPointHaloActive {
+  fill: rgba(255, 179, 71, 0.2);
+}
+
+.systemChartEmpty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  display: grid;
+  place-items: center;
+  min-height: 420px;
+}
+
+.systemChartDetailFooter {
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  background: rgba(6, 14, 26, 0.78);
+  padding: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 0.6fr) minmax(0, 0.8fr) minmax(0, 0.8fr);
+  gap: 8px;
+}
+
+.systemChartDetailFooter .contextMessagePreviewMeta {
+  display: flex;
+  justify-content: flex-start;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.systemObservabilityPanel {
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  background: rgba(6, 14, 26, 0.78);
+  padding: 8px;
+  display: grid;
+  gap: 8px;
+}
+
+.systemObservabilityGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px 10px;
+}
+
+.systemObservabilityGrid div {
+  display: grid;
+  gap: 2px;
+}
+
+.systemObservabilityGrid span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.systemObservabilityGrid strong {
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-family: var(--font-mono), ui-monospace, monospace;
+}
+
+.systemObservabilityEvents {
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  background: rgba(4, 10, 18, 0.68);
+  display: grid;
+  gap: 6px;
+  padding: 6px;
+}
+
+.systemObservabilityEventsHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.systemObservabilityEventsHeader span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.systemObservabilityEventsHeader strong {
+  color: var(--ink);
+  font-size: 0.72rem;
+  font-family: var(--font-mono), ui-monospace, monospace;
+}
+
+.systemObservabilityEventsBody {
+  max-height: 180px;
+  overflow: auto;
+  display: grid;
+  gap: 4px;
+}
+
+.systemObservabilityEventRow {
+  display: grid;
+  grid-template-columns: 72px 96px 112px 70px minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+}
+
+.systemObservabilityEventRow span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  text-transform: lowercase;
+}
+
+.systemObservabilityEventRow strong {
+  color: var(--ink);
+  font-size: 0.7rem;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.systemObservabilityEventsEmpty {
+  color: var(--muted);
+  font-size: 0.74rem;
+  margin: 0;
+}
+
+.flightContextActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.flightContextStatus {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.systemActionReadiness {
+  margin-top: 2px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.systemActionReady {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.systemActionBlocked {
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.systemContactToken {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-weight: 700;
+}
+
+.systemChartSelectedToken {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.92rem;
+  font-weight: 700;
+  paint-order: stroke;
+  stroke: rgba(4, 10, 18, 0.8);
+  stroke-width: 1px;
+}
+
+.systemTargetPathBlockToken {
+  color: var(--muted);
+}
+
+.systemTargetPathBlockTokenActive {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.flightDockedBay {
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, rgba(4, 10, 18, 0.92) 0%, rgba(3, 8, 15, 0.96) 100%);
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.flightDockedBayHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.flightDockedBayHeader span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.flightDockedBayHeader strong {
+  color: var(--ink);
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.82rem;
+}
+
+.flightDockedBayScene {
+  position: relative;
+  min-height: 348px;
+  border: 1px solid rgba(125, 249, 255, 0.28);
+  border-radius: 10px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% -10%, rgba(122, 209, 255, 0.2), transparent 56%),
+    radial-gradient(circle at 50% 30%, rgba(68, 124, 176, 0.16), transparent 44%),
+    linear-gradient(to bottom, rgba(8, 18, 32, 0.95), rgba(4, 9, 17, 0.98));
+}
+
+.flightDockedBaySceneDefault {
+  /* default baseline keeps core hangar composition */
+}
+
+.flightDockedBaySceneCoriolis .flightDockedBayStationRing {
+  border-color: rgba(125, 249, 255, 0.26);
+  box-shadow:
+    inset 0 0 0 1px rgba(125, 249, 255, 0.12),
+    0 0 18px rgba(125, 249, 255, 0.08);
+}
+
+.flightDockedBaySceneCoriolis .flightDockedBayDoor {
+  left: 35%;
+  right: 35%;
+  border-radius: 4px;
+}
+
+.flightDockedBaySceneCoriolis .flightDockedBayGuideLeft,
+.flightDockedBaySceneCoriolis .flightDockedBayGuideRight {
+  width: 2px;
+  height: 64%;
+  background: rgba(125, 249, 255, 0.36);
+}
+
+.flightDockedBaySceneOrbis .flightDockedBayStationRing {
+  left: 8%;
+  right: 8%;
+  top: 16%;
+  height: 40%;
+  border-radius: 999px;
+  border-color: rgba(125, 249, 255, 0.22);
+}
+
+.flightDockedBaySceneOrbis .flightDockedBayDoor {
+  left: 39%;
+  right: 39%;
+  top: 24%;
+  height: 22%;
+  border-radius: 999px;
+}
+
+.flightDockedBaySceneOrbis .flightDockedBayGuideLeft {
+  left: 40%;
+  transform: rotate(10deg);
+}
+
+.flightDockedBaySceneOrbis .flightDockedBayGuideRight {
+  right: 40%;
+  transform: rotate(-10deg);
+}
+
+.flightDockedBayWallRibs {
+  position: absolute;
+  inset: 0;
+  background:
+    repeating-linear-gradient(
+      to right,
+      rgba(118, 201, 255, 0.08) 0,
+      rgba(118, 201, 255, 0.08) 1px,
+      transparent 1px,
+      transparent 82px
+    ),
+    repeating-linear-gradient(
+      to bottom,
+      rgba(81, 146, 198, 0.07) 0,
+      rgba(81, 146, 198, 0.07) 1px,
+      transparent 1px,
+      transparent 56px
+    );
+  opacity: 0.45;
+}
+
+.flightDockedBayHangarBands {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 56%;
+  background:
+    linear-gradient(to bottom, rgba(8, 14, 24, 0.8), rgba(6, 12, 22, 0.18)),
+    repeating-linear-gradient(
+      110deg,
+      rgba(168, 203, 233, 0.08) 0,
+      rgba(168, 203, 233, 0.08) 2px,
+      transparent 2px,
+      transparent 52px
+    );
+}
+
+.flightDockedBayCeilingLattice {
+  position: absolute;
+  left: 10%;
+  right: 10%;
+  top: 5%;
+  height: 28%;
+  border: 1px solid rgba(120, 208, 255, 0.2);
+  border-radius: 16px 16px 8px 8px;
+  background:
+    linear-gradient(to bottom, rgba(70, 116, 160, 0.2), rgba(27, 53, 82, 0.05)),
+    repeating-linear-gradient(
+      to right,
+      transparent 0,
+      transparent 42px,
+      rgba(138, 214, 255, 0.16) 42px,
+      rgba(138, 214, 255, 0.16) 43px
+    );
+}
+
+.flightDockedBayLightStripLeft,
+.flightDockedBayLightStripRight {
+  position: absolute;
+  top: 9%;
+  width: 3px;
+  height: 58%;
+  background: linear-gradient(to bottom, rgba(168, 233, 255, 0.68), rgba(168, 233, 255, 0.02));
+  box-shadow: 0 0 10px rgba(120, 218, 255, 0.36);
+}
+
+.flightDockedBayLightStripLeft {
+  left: 14%;
+}
+
+.flightDockedBayLightStripRight {
+  right: 14%;
+}
+
+.flightDockedBayStationRing {
+  position: absolute;
+  left: 9%;
+  right: 9%;
+  top: 16%;
+  height: 44%;
+  border: 1px solid rgba(125, 249, 255, 0.18);
+  border-radius: 999px;
+  box-shadow:
+    inset 0 0 0 1px rgba(125, 249, 255, 0.08),
+    0 0 18px rgba(76, 182, 240, 0.12);
+}
+
+.flightDockedBayDoor {
+  position: absolute;
+  left: 34%;
+  right: 34%;
+  top: 18%;
+  height: 28%;
+  border: 1px solid rgba(125, 249, 255, 0.24);
+  border-radius: 6px;
+  background:
+    linear-gradient(to bottom, rgba(24, 48, 74, 0.72), rgba(8, 16, 28, 0.84));
+}
+
+.flightDockedBayDockGlow {
+  position: absolute;
+  left: 38%;
+  right: 38%;
+  bottom: 21%;
+  height: 42%;
+  background:
+    linear-gradient(to bottom, rgba(125, 249, 255, 0.14), transparent 76%),
+    linear-gradient(to top, rgba(255, 186, 82, 0.08), transparent 68%);
+  filter: blur(0.8px);
+}
+
+.flightDockedBayPadHalo {
+  position: absolute;
+  left: 28%;
+  right: 28%;
+  bottom: 14%;
+  height: 18%;
+  border-radius: 999px;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(255, 176, 80, 0.26) 0%,
+    rgba(255, 176, 80, 0.06) 58%,
+    rgba(255, 176, 80, 0) 100%
+  );
+  filter: blur(0.5px);
+}
+
+.flightDockedBayFloor {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 34%;
+  border-top: 1px solid rgba(125, 249, 255, 0.26);
+  background:
+    linear-gradient(
+      to bottom,
+      rgba(19, 34, 52, 0.96) 0,
+      rgba(8, 16, 28, 0.98) 100%
+    ),
+    repeating-linear-gradient(
+      to right,
+      transparent 0,
+      transparent 34px,
+      rgba(125, 249, 255, 0.15) 34px,
+      rgba(125, 249, 255, 0.15) 35px
+    );
+}
+
+.flightDockedBayPadCircle {
+  position: absolute;
+  left: 22%;
+  right: 22%;
+  bottom: 10%;
+  height: 30%;
+  border: 2px solid rgba(255, 172, 82, 0.48);
+  border-radius: 999px;
+  opacity: 0.82;
+}
+
+.flightDockedBayPadCenterline {
+  position: absolute;
+  left: 50%;
+  bottom: 9%;
+  width: 2px;
+  height: 28%;
+  transform: translateX(-50%);
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      rgba(255, 196, 108, 0.9) 0,
+      rgba(255, 196, 108, 0.9) 10px,
+      rgba(255, 196, 108, 0) 10px,
+      rgba(255, 196, 108, 0) 15px
+    );
+}
+
+.flightDockedBayGuideLeft,
+.flightDockedBayGuideRight {
+  position: absolute;
+  bottom: 34%;
+  width: 2px;
+  height: 46%;
+  background: rgba(125, 249, 255, 0.26);
+}
+
+.flightDockedBayGuideLeft {
+  left: 40%;
+  transform: rotate(13deg);
+  transform-origin: bottom center;
+}
+
+.flightDockedBayGuideRight {
+  right: 40%;
+  transform: rotate(-13deg);
+  transform-origin: bottom center;
+}
+
+.flightDockedBayCautionLeft,
+.flightDockedBayCautionRight {
+  position: absolute;
+  bottom: 31%;
+  width: 64px;
+  height: 12px;
+  border-radius: 2px;
+  background:
+    repeating-linear-gradient(90deg,
+      rgba(255, 197, 73, 0.9) 0,
+      rgba(255, 197, 73, 0.9) 8px,
+      rgba(72, 50, 8, 0.95) 8px,
+      rgba(72, 50, 8, 0.95) 16px);
+}
+
+.flightDockedBayCautionLeft {
+  left: calc(50% - 170px);
+}
+
+.flightDockedBayCautionRight {
+  left: calc(50% + 106px);
+}
+
+.flightDockedBayShipNameplate {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.flightDockedBayShipNameplate span,
+.flightDockedBayShipNameplate strong {
+  border: 1px solid rgba(114, 211, 255, 0.24);
+  border-radius: 999px;
+  background: rgba(8, 18, 30, 0.62);
+  color: rgba(205, 234, 255, 0.88);
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+}
+
+.flightDockedBayShipNameplate strong {
+  color: rgba(255, 202, 128, 0.92);
+}
+
+.flightDockedShipMk1 {
+  position: absolute;
+  left: 50%;
+  bottom: 25%;
+  width: 238px;
+  height: 108px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.flightDockedShipBody,
+.flightDockedShipNose,
+.flightDockedShipWingLeft,
+.flightDockedShipWingRight,
+.flightDockedShipCockpit,
+.flightDockedShipShadow,
+.flightDockedShipReflection,
+.flightDockedShipPanelCenter,
+.flightDockedShipPanelLeft,
+.flightDockedShipPanelRight,
+.flightDockedShipChineLeft,
+.flightDockedShipChineRight,
+.flightDockedShipSternPlate,
+.flightDockedShipNoseLight,
+.flightDockedShipVentLeft,
+.flightDockedShipVentRight,
+.flightDockedShipEngineLeft,
+.flightDockedShipEngineRight {
+  position: absolute;
+  display: block;
+}
+
+.flightDockedShipShadow {
+  left: 30px;
+  right: 30px;
+  bottom: 8px;
+  height: 16px;
+  border-radius: 999px;
+  background: radial-gradient(circle at 50% 50%, rgba(2, 6, 12, 0.7), rgba(2, 6, 12, 0));
+}
+
+.flightDockedShipReflection {
+  left: 42px;
+  right: 42px;
+  bottom: 14px;
+  height: 5px;
+  border-radius: 999px;
+  background: linear-gradient(to right, rgba(130, 180, 214, 0), rgba(130, 180, 214, 0.26), rgba(130, 180, 214, 0));
+}
+
+.flightDockedShipBody {
+  left: 34px;
+  right: 34px;
+  top: 34px;
+  height: 44px;
+  border-radius: 10px 10px 18px 18px;
+  background: linear-gradient(to bottom, rgba(155, 167, 184, 0.98), rgba(101, 111, 127, 0.98));
+  box-shadow:
+    inset 0 1px 0 rgba(246, 252, 255, 0.3),
+    0 0 0 1px rgba(244, 252, 255, 0.16);
+}
+
+.flightDockedShipNose {
+  left: 90px;
+  top: 8px;
+  width: 58px;
+  height: 36px;
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+  background: linear-gradient(to bottom, rgba(182, 189, 201, 0.98), rgba(113, 124, 140, 0.98));
+}
+
+.flightDockedShipWingLeft,
+.flightDockedShipWingRight {
+  top: 38px;
+  width: 74px;
+  height: 24px;
+  background: linear-gradient(to bottom, rgba(122, 134, 150, 0.95), rgba(80, 91, 106, 0.98));
+}
+
+.flightDockedShipWingLeft {
+  left: 0;
+  clip-path: polygon(100% 10%, 16% 0, 0 52%, 16% 100%, 100% 88%);
+}
+
+.flightDockedShipWingRight {
+  right: 0;
+  clip-path: polygon(0 10%, 84% 0, 100% 52%, 84% 100%, 0 88%);
+}
+
+.flightDockedShipChineLeft,
+.flightDockedShipChineRight {
+  top: 36px;
+  width: 16px;
+  height: 36px;
+  background: linear-gradient(to bottom, rgba(188, 198, 212, 0.24), rgba(124, 135, 150, 0.12));
+}
+
+.flightDockedShipChineLeft {
+  left: 73px;
+  transform: skewY(14deg);
+}
+
+.flightDockedShipChineRight {
+  right: 73px;
+  transform: skewY(-14deg);
+}
+
+.flightDockedShipCockpit {
+  left: 101px;
+  top: 24px;
+  width: 36px;
+  height: 9px;
+  border-radius: 4px;
+  background: rgba(124, 222, 255, 0.72);
+  box-shadow: 0 0 10px rgba(114, 214, 255, 0.56);
+}
+
+.flightDockedShipPanelCenter {
+  left: 118px;
+  top: 20px;
+  width: 2px;
+  height: 58px;
+  background: rgba(217, 225, 235, 0.34);
+}
+
+.flightDockedShipPanelLeft,
+.flightDockedShipPanelRight {
+  top: 24px;
+  width: 2px;
+  height: 44px;
+  background: rgba(197, 204, 214, 0.24);
+}
+
+.flightDockedShipPanelLeft {
+  left: 96px;
+  transform: rotate(-10deg);
+}
+
+.flightDockedShipPanelRight {
+  right: 96px;
+  transform: rotate(10deg);
+}
+
+.flightDockedShipNoseLight {
+  left: 106px;
+  top: 44px;
+  width: 24px;
+  height: 8px;
+  border-radius: 5px;
+  background: rgba(205, 238, 255, 0.84);
+  box-shadow:
+    0 0 12px rgba(160, 226, 255, 0.52),
+    0 0 18px rgba(120, 194, 255, 0.34);
+}
+
+.flightDockedShipSternPlate {
+  left: 96px;
+  bottom: 23px;
+  width: 46px;
+  height: 10px;
+  border-radius: 3px;
+  background: rgba(67, 74, 84, 0.92);
+}
+
+.flightDockedShipVentLeft,
+.flightDockedShipVentRight {
+  bottom: 38px;
+  width: 16px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(142, 153, 168, 0.76);
+}
+
+.flightDockedShipVentLeft {
+  left: 70px;
+}
+
+.flightDockedShipVentRight {
+  right: 70px;
+}
+
+.flightDockedShipEngineLeft,
+.flightDockedShipEngineRight {
+  bottom: 22px;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: rgba(88, 198, 255, 0.92);
+  box-shadow: 0 0 10px rgba(88, 198, 255, 0.64);
+}
+
+.flightDockedShipEngineLeft {
+  left: 98px;
+}
+
+.flightDockedShipEngineRight {
+  right: 98px;
+}
+
+.flightCommandStrip {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.flightModeButtons,
+.flightActionButtons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.flightActionButtons {
+  justify-content: flex-end;
+}
+
+.flightActionButtonsSystem {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+}
+
+.flightSettingsMenu {
+  position: relative;
+}
+
+.flightSettingsPopover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 220px;
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  background: rgba(8, 16, 30, 0.94);
+  padding: 10px;
+  z-index: 5;
+}
+
+.flightSettingsPopover label {
+  display: grid;
+  gap: 5px;
+}
+
+.flightSettingsToggleLabel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+}
+
+.flightSettingsToggleLabel input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
+.flightSettingsPopover span {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.68rem;
+}
+
+.flightSettingsPopover select {
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  background: rgba(5, 10, 18, 0.86);
+  color: var(--ink);
+  padding: 7px 8px;
+  font-size: 0.82rem;
+}
+
+.flightSettingsHint {
+  margin-top: 8px;
+  margin-bottom: 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.flightPillButton {
+  border: none;
+  border-radius: 999px;
+  padding: 9px 14px;
+  font-size: 0.74rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #081425;
+  background: linear-gradient(120deg, var(--accent), var(--accent-strong));
+  cursor: pointer;
+}
+
+.flightPillActive {
+  box-shadow: 0 0 0 1px rgba(255, 179, 71, 0.6);
+}
+
+.flightPillDisabled {
+  opacity: 0.55;
+}
+
+.flightPillButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.flightScanner {
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  background: rgba(8, 16, 30, 0.82);
+  padding: 7px;
+  display: grid;
+  gap: 6px;
+  grid-template-rows: 1fr auto;
+}
+
+.scannerGrid {
+  position: relative;
+  min-height: 248px;
+  --scanner-origin-y: 58%;
+  border: 1px solid rgba(125, 249, 255, 0.24);
+  border-radius: 10px;
+  background:
+    linear-gradient(to bottom, rgba(125, 249, 255, 0.08), rgba(5, 10, 18, 0.94) 36%),
+    radial-gradient(circle at center, rgba(125, 249, 255, 0.08), rgba(5, 10, 18, 0.94));
+}
+
+.scannerTopRow {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  top: 6px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.55fr) minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: auto;
+  gap: 10px;
+  align-items: start;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.scannerTopMetric {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  text-align: left;
+}
+
+.scannerTopMetricCenter {
+  text-align: center;
+}
+
+.scannerTopMetricRight {
+  text-align: right;
+}
+
+.scannerTopMetricSystem {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.scannerTopMetricDockRange {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.scannerTopMetricDockRange span {
+  white-space: nowrap;
+}
+
+.scannerTopMetricDockRange strong {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  line-height: 1.12;
+}
+
+.scannerTopMetricLocation {
+  grid-column: 4;
+  grid-row: 1;
+}
+
+.scannerTopMetricTarget {
+  grid-column: 3;
+  grid-row: 1;
+}
+
+.scannerTopMetricInteractive {
+  pointer-events: auto;
+}
+
+.scannerTopMetric span {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.62rem;
+}
+
+.scannerTopMetric strong {
+  color: var(--ink);
+  font-size: 0.74rem;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.scannerRangeDock {
+  position: absolute;
+  left: 10px;
+  bottom: 0;
+  z-index: 6;
+  display: grid;
+  gap: 4px;
+  pointer-events: auto;
+}
+
+.scannerRangeLabel {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.62rem;
+  line-height: 1;
+}
+
+.scannerRangeSelect {
+  width: 92px;
+  border: 1px solid rgba(125, 249, 255, 0.25);
+  border-radius: 6px;
+  background: rgba(5, 10, 18, 0.88);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.7rem;
+  line-height: 1.2;
+  padding: 2px 6px;
+}
+
+.scannerRangeSelect:focus-visible {
+  outline: 1px solid rgba(125, 249, 255, 0.72);
+  outline-offset: 1px;
+}
+
+
+.scannerPlane {
+  position: absolute;
+  left: 6%;
+  right: 6%;
+  top: 24%;
+  bottom: 8%;
+  border: 2px solid rgba(125, 249, 255, 0.62);
+  border-radius: 50% / 48%;
+  transform: perspective(260px) rotateX(52deg);
+  transform-origin: center;
+  background:
+    linear-gradient(to bottom,
+      transparent 0,
+      transparent 34%,
+      rgba(125, 249, 255, 0.26) 34%,
+      rgba(125, 249, 255, 0.26) 35%,
+      transparent 35%,
+      transparent 56%,
+      rgba(125, 249, 255, 0.32) 56%,
+      rgba(125, 249, 255, 0.32) 57%,
+      transparent 57%,
+      transparent 78%,
+      rgba(125, 249, 255, 0.44) 78%,
+      rgba(125, 249, 255, 0.44) 79%,
+      transparent 79%),
+    linear-gradient(to right,
+      transparent 0,
+      transparent 31.6%,
+      rgba(125, 249, 255, 0.34) 31.6%,
+      rgba(125, 249, 255, 0.34) 33.2%,
+      transparent 33.2%,
+      transparent 49.2%,
+      rgba(125, 249, 255, 0.5) 49.2%,
+      rgba(125, 249, 255, 0.5) 50.8%,
+      transparent 50.8%,
+      transparent 66.8%,
+      rgba(125, 249, 255, 0.34) 66.8%,
+      rgba(125, 249, 255, 0.34) 68.4%,
+      transparent 68.4%);
+  box-shadow:
+    inset 0 -2px 0 rgba(125, 249, 255, 0.76),
+    inset 0 1px 0 rgba(125, 249, 255, 0.22);
+}
+
+.scannerPlaneCenterLine {
+  position: absolute;
+  left: 50%;
+  top: 35%;
+  bottom: 20%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: rgba(125, 249, 255, 0.42);
+}
+
+.scannerFovWedge {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  --scanner-fov-half-angle: 32deg;
+  overflow: hidden;
+  border-radius: 10px;
+}
+
+.scannerFovEdgeLeft,
+.scannerFovEdgeRight {
+  position: absolute;
+  display: block;
+  background: rgba(125, 249, 255, 0.72);
+  pointer-events: none;
+}
+
+.scannerFovEdgeLeft {
+  left: 50%;
+  bottom: calc(100% - var(--scanner-origin-y));
+  width: 1px;
+  height: 30%;
+  transform-origin: bottom center;
+  transform: translateX(-50%) rotate(calc(-1 * var(--scanner-fov-half-angle)));
+}
+
+.scannerFovEdgeRight {
+  left: 50%;
+  bottom: calc(100% - var(--scanner-origin-y));
+  width: 1px;
+  height: 30%;
+  transform-origin: bottom center;
+  transform: translateX(-50%) rotate(var(--scanner-fov-half-angle));
+}
+
+.scannerOwnship {
+  position: absolute;
+  left: 50%;
+  top: var(--scanner-origin-y);
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  transform: translate(-50%, -50%);
+  border: 1px solid rgba(244, 252, 255, 0.9);
+  background: rgba(125, 249, 255, 0.2);
+  box-shadow: 0 0 8px rgba(125, 249, 255, 0.48);
+  pointer-events: none;
+  z-index: 4;
+}
+
+.scannerAltitudeLine {
+  position: absolute;
+  width: 1px;
+  transform: translateX(-50%);
+  background: rgba(125, 249, 255, 0.5);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.scannerPlaneDot {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  transform: translate(-50%, -50%);
+  background: rgba(125, 249, 255, 0.52);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.scannerBlip {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 8px rgba(125, 249, 255, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  transform: translate(-50%, -50%);
+  cursor: pointer;
+  z-index: 3;
+}
+
+.scannerBlipShip {
+  background: #72d6ff;
+}
+
+.scannerBlipStation {
+  background: #ffd56a;
+}
+
+.scannerBlipPlanet {
+  background: #7effa1;
+}
+
+.scannerBlipStar {
+  background: #ff9f7e;
+}
+
+.scannerBlipSelected {
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.35), 0 0 14px rgba(125, 249, 255, 0.75);
+}
+
+.scannerBlipInView {
+  opacity: 1;
+}
+
+.scannerBlipOutOfView {
+  opacity: 0.46;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.22);
+}
+
+.flightScanner p {
+  margin: 0;
+  color: var(--muted);
+  text-align: center;
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.scannerMetaGrid {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.scannerMetaCard {
+  border: 1px solid rgba(125, 249, 255, 0.2);
+  border-radius: 10px;
+  background: rgba(5, 10, 18, 0.86);
+  padding: 7px;
+  display: grid;
+  gap: 4px;
+}
+
+.scannerMetaCard span {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.68rem;
+}
+
+.scannerMetaCard strong {
+  color: var(--ink);
+  font-size: 0.8rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.scannerContactsList {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.scannerDebugLine {
+  margin: 0;
+  color: rgba(125, 249, 255, 0.78);
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  font-family: var(--font-geist-mono), var(--font-sans), monospace;
+}
+
+.scannerContactRow {
+  border: 1px solid rgba(125, 249, 255, 0.2);
+  border-radius: 8px;
+  background: rgba(5, 10, 18, 0.7);
+  color: var(--ink);
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 8px;
+  align-items: center;
+  text-align: left;
+  padding: 5px 7px;
+  cursor: pointer;
+}
+
+.scannerContactRow span {
+  color: var(--muted);
+  font-size: 0.65rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.scannerContactRow strong {
+  color: var(--ink);
+  font-size: 0.74rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scannerContactRowActive {
+  border-color: rgba(125, 249, 255, 0.52);
+  background: rgba(11, 23, 41, 0.9);
+}
+
+.gaugeCard,
+.telemetryCard {
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  background: rgba(8, 16, 30, 0.72);
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.flightActionsCard {
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  background: rgba(8, 16, 30, 0.72);
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+  align-content: start;
+}
+
+.flightPanelDocked .gaugeCard,
+.flightPanelDocked .flightScanner,
+.flightPanelDocked .flightActionsCard {
+  padding: 8px;
+}
+
+.flightPanelDocked .scannerGrid {
+  min-height: 180px;
+}
+
+.gaugeRow {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.gaugeGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.gaugeRow span {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.gaugeRow strong {
+  justify-self: end;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.86rem;
+}
+
+.gaugeTrack {
+  grid-column: 1 / -1;
+  height: 7px;
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  background: rgba(5, 10, 18, 0.86);
+  overflow: hidden;
+}
+
+.rollGaugeTrack {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+}
+
+.rollGaugeHalf {
+  height: 7px;
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  background: rgba(5, 10, 18, 0.86);
+  overflow: hidden;
+  display: flex;
+}
+
+.rollGaugeHalfLeft {
+  justify-content: flex-end;
+}
+
+.rollGaugeHalfRight {
+  justify-content: flex-start;
+}
+
+.rollGaugeFill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(255, 163, 48, 0.82), rgba(255, 195, 92, 0.95));
+}
+
+.rollGaugeCenter {
+  color: var(--muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  line-height: 1;
+}
+
+@media (max-width: 1200px) {
+  .scannerContactsList {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 1200px) {
+  .scannerTopRow {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto;
+    gap: 4px;
+  }
+
+  .scannerTopMetric,
+  .scannerTopMetricCenter,
+  .scannerTopMetricRight {
+    text-align: left;
+  }
+
+  .scannerTopMetricSystem,
+  .scannerTopMetricDockRange,
+  .scannerTopMetricLocation,
+  .scannerTopMetricTarget {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+}
+
+@media (max-width: 1200px) {
+  .gaugeGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.systemTelemetryBlock {
+  border: 1px solid rgba(125, 249, 255, 0.2);
+  border-radius: 10px;
+  background: rgba(5, 10, 18, 0.86);
+  padding: 6px;
+  display: grid;
+  gap: 5px;
+}
+
+.systemTelemetryRows {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+  align-items: start;
+}
+
+.systemTelemetryRows+.systemTelemetryRows {
+  padding-top: 5px;
+  border-top: 1px solid rgba(125, 249, 255, 0.12);
+}
+
+.systemTelemetryCollisionLine {
+  border: 1px solid rgba(125, 249, 255, 0.2);
+  border-radius: 10px;
+  background: rgba(5, 10, 18, 0.86);
+  padding: 6px 8px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+}
+
+.systemTelemetryCollisionLine span {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.68rem;
+}
+
+.systemTelemetryCollisionLine strong {
+  color: var(--ink);
+  font-size: 0.8rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.systemTelemetryCell {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.systemTelemetryRows span {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.68rem;
+}
+
+.systemTelemetryRows strong {
+  color: var(--ink);
+  font-size: 0.8rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 1200px) {
+  .systemTelemetryRows {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+.gaugeFill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(120deg, var(--accent), var(--accent-strong));
+}
+
+.fuelGaugeFillNormal {
+  background: var(--ok);
+}
+
+.fuelGaugeFillWarning {
+  background: var(--accent-strong);
+}
+
+.fuelGaugeFillCritical {
+  background: var(--danger);
+}
+
+.telemetryList {
+  display: grid;
+  gap: 4px;
+  font-family: var(--font-mono), ui-monospace, monospace;
+}
+
+.telemetryList p {
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+
+.contextMiniPanel {
+  position: fixed;
+  right: clamp(16px, 4vw, 36px);
+  bottom: 22px;
+  z-index: 12;
+  width: min(380px, 100%);
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(125, 249, 255, 0.32);
+  background: rgba(8, 22, 40, 0.78);
+  box-shadow: inset 0 0 0 1px rgba(125, 249, 255, 0.08);
+}
+
+.contextMiniPanelInline {
+  position: static;
+  right: auto;
+  bottom: auto;
+  z-index: auto;
+  width: 100%;
+  padding: 8px;
+  border-radius: 14px;
+}
+
+.flightContextGrid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.flightContextCard {
+  border: 1px solid rgba(125, 249, 255, 0.2);
+  border-radius: 12px;
+  background: rgba(6, 14, 26, 0.82);
+  padding: 6px;
+  display: grid;
+  gap: 5px;
+}
+
+.flightContextCardWide {
+  grid-column: 1 / -1;
+}
+
+.flightContextRows {
+  display: grid;
+  grid-template-columns: minmax(72px, auto) minmax(0, 1fr);
+  gap: 5px 8px;
+  align-items: start;
+}
+
+.flightContextRows span {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.68rem;
+}
+
+.flightContextRows strong {
+  color: var(--ink);
+  font-size: 0.8rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.flightFocusLayout {
+  display: grid;
+  gap: 8px;
+}
+
+.flightFocusColumn {
+  border: 1px solid rgba(125, 249, 255, 0.2);
+  border-radius: 10px;
+  background: rgba(5, 10, 18, 0.86);
+  padding: 6px;
+}
+
+.flightFocusBottom {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border: 1px solid rgba(125, 249, 255, 0.2);
+  border-radius: 10px;
+  background: rgba(5, 10, 18, 0.86);
+  padding: 6px;
+}
+
+.flightFocusMetric {
+  display: grid;
+  gap: 4px;
+}
+
+.flightFocusMetric span {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.68rem;
+}
+
+.flightFocusMetric strong {
+  color: var(--ink);
+  font-size: 0.8rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.contextMiniHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.contextMiniHeader span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.contextMiniList {
+  display: grid;
+  gap: 6px;
+  border: 1px solid rgba(125, 249, 255, 0.2);
+  border-radius: 12px;
+  background: rgba(6, 14, 26, 0.82);
+  padding: 10px;
+}
+
+.contextMiniList p {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.82rem;
+  line-height: 1.25;
+}
+
+.contextMiniList p:first-child {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 0.72rem;
+}
+
+.mvpPanel {
+  display: grid;
+  gap: 10px;
+}
+
+.mvpList {
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  background: rgba(8, 16, 30, 0.72);
+  padding: 12px;
+  display: grid;
+  gap: 6px;
+}
+
+.mvpStatus {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
 .summaryList {
   display: grid;
   gap: 10px;
@@ -612,6 +3663,22 @@
   gap: 12px;
 }
 
+.storyGrid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(300px, 0.9fr) minmax(0, 1.1fr);
+}
+
+.storyControlsPanel,
+.storyTimelinePanel {
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  background: rgba(8, 16, 30, 0.72);
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
 .storyHeader button {
   border: none;
   border-radius: 999px;
@@ -627,6 +3694,66 @@
   gap: 10px;
 }
 
+.storyControls {
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  background: rgba(8, 16, 30, 0.72);
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.storyControls label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+}
+
+.storyControls select,
+.storyControls input {
+  background: var(--panel-strong);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  padding: 10px 12px;
+  color: var(--ink);
+}
+
+.storyControls button {
+  border: none;
+  border-radius: 999px;
+  padding: 10px 16px;
+  font-weight: 600;
+  cursor: pointer;
+  color: #081425;
+  background: linear-gradient(120deg, var(--accent), var(--accent-strong));
+}
+
+.storyInterpretation {
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.storyInterpretation p {
+  color: var(--ink);
+  font-size: 0.92rem;
+}
+
+.storyConfirmActions {
+  display: flex;
+  gap: 8px;
+}
+
+.storyOutcome {
+  color: var(--ok);
+  font-size: 0.9rem;
+}
+
 .storyItem {
   border: 1px solid var(--edge);
   border-radius: 14px;
@@ -634,6 +3761,7 @@
   padding: 12px;
   display: grid;
   gap: 4px;
+  font-family: var(--font-mono), ui-monospace, monospace;
 }
 
 .storyItem span {
@@ -680,8 +3808,41 @@
 }
 
 @media (max-width: 720px) {
+  .main {
+    grid-template-columns: 1fr;
+  }
+
   .page {
     padding: 32px 20px;
+  }
+
+  .modeMainPanel {
+    min-height: auto;
+  }
+
+  .contextMiniPanel {
+    position: static;
+    justify-self: stretch;
+    width: 100%;
+    z-index: auto;
+  }
+
+  .flightContextGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .flightCommandStrip {
+    justify-content: flex-start;
+    align-items: stretch;
+  }
+
+  .flightActionButtons {
+    justify-content: flex-start;
+  }
+
+  .scannerMetaGrid,
+  .flightFocusBottom {
+    grid-template-columns: 1fr;
   }
 
   .actions {
@@ -691,5 +3852,83 @@
 
   .tradeGrid {
     grid-template-columns: 1fr;
+  }
+
+  .tradeTableHeader,
+  .tradeRow,
+  .tradeRowActive {
+    grid-template-columns: minmax(130px, 1.4fr) 0.8fr 0.8fr 0.8fr 0.8fr;
+    font-size: 0.82rem;
+  }
+
+  .tradeBottomStrip {
+    grid-template-columns: 1fr;
+  }
+
+  .flightHudGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .flightContextPrimarySystem {
+    width: 100%;
+  }
+
+  .systemOverviewGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .systemSelectionSummary {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .systemToolbar {
+    align-items: stretch;
+  }
+
+  .systemChartControls {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .systemDataWorkspace {
+    grid-template-columns: 1fr;
+  }
+
+  .flightActionButtonsSystem {
+    justify-content: flex-start;
+  }
+
+  .storyGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .contextFieldGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .contextMarketBoard {
+    overflow-x: auto;
+  }
+
+  .contextMarketHeader,
+  .contextMarketRow,
+  .contextMarketRowActive,
+  .contextMarketRowStatic,
+  .contextMarketRowPlaceholder {
+    min-width: 700px;
+    grid-template-columns: minmax(95px, 1fr) minmax(125px, 1.35fr) minmax(90px, 0.95fr) 0.8fr 1fr 0.7fr 0.7fr;
+    gap: 6px;
+  }
+
+  .contextMarketHeader {
+    font-size: 0.62rem;
+  }
+
+  .contextMarketRow,
+  .contextMarketRowActive,
+  .contextMarketRowStatic,
+  .contextMarketRowPlaceholder {
+    font-size: 0.76rem;
   }
 }

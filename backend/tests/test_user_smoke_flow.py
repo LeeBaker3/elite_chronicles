@@ -111,7 +111,7 @@ def seed_user_flow_data(db_session):
 
 def test_user_smoke_flow(client, db_session):
     """Verify a full user API flow across auth, market, cargo, and story."""
-    station_id, commodity_id, ship_id = seed_user_flow_data(db_session)
+    station_id, commodity_id, _seed_ship_id = seed_user_flow_data(db_session)
 
     health = client.get("/health")
     assert health.status_code == 200
@@ -127,8 +127,32 @@ def test_user_smoke_flow(client, db_session):
         },
     )
     assert register.status_code == 200
+    user_id = register.json()["user_id"]
     token = register.json()["token"]
     auth_headers = {"Authorization": f"Bearer {token}"}
+
+    player = db_session.query(User).filter(User.id == user_id).first()
+    assert player is not None
+    player.credits = 2_000
+    db_session.flush()
+
+    player_ship = Ship(
+        owner_user_id=user_id,
+        name="Smoke Pilot Ship",
+        hull_max=100,
+        hull_current=100,
+        shields_max=100,
+        shields_current=100,
+        energy_cap=100,
+        energy_current=100,
+        fuel_cap=100,
+        fuel_current=100,
+        cargo_capacity=10,
+        status="docked",
+        docked_station_id=station_id,
+    )
+    db_session.add(player_ship)
+    db_session.commit()
 
     stations = client.get("/api/stations")
     assert stations.status_code == 200
@@ -150,14 +174,14 @@ def test_user_smoke_flow(client, db_session):
     assert story_sessions.status_code == 200
     assert isinstance(story_sessions.json(), list)
 
-    cargo = client.get(f"/api/ships/{ship_id}/cargo")
+    cargo = client.get(f"/api/ships/{player_ship.id}/cargo")
     assert cargo.status_code == 200
     assert "cargo_capacity" in cargo.json()
 
     trade = client.post(
         f"/api/stations/{station_id}/trade",
         json={
-            "ship_id": ship_id,
+            "ship_id": player_ship.id,
             "commodity_id": commodity_id,
             "qty": 1,
             "direction": "buy",

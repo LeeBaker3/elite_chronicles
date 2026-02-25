@@ -39,7 +39,7 @@ This checklist defines baseline UI system requirements before broad feature expa
 ### Contract
 - [x] One global toast provider exists at app root.
 - [x] API supports `success`, `info`, `warning`, `error` variants.
-- [ ] API supports configurable timeout and optional persistent mode.
+- [x] API supports configurable timeout and optional persistent mode.
 
 ### Behavior
 - [x] Toast stack position is standardized.

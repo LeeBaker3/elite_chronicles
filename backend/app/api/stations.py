@@ -1,9 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_current_user
 from app.models.cargo import ShipCargo
 from app.models.ship import Ship
 from app.db.session import get_db
+from app.models.user import User
 from app.models.world import Commodity, Station, StationInventory
 from app.schemas.stations import StationSummary
 from app.schemas.trade import InventoryItem, TradeRequest
@@ -45,7 +47,12 @@ def get_inventory(station_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{station_id}/trade")
-def trade(station_id: int, payload: TradeRequest, db: Session = Depends(get_db)):
+def trade(
+    station_id: int,
+    payload: TradeRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     item = (
         db.query(StationInventory)
         .filter(
@@ -60,74 +67,86 @@ def trade(station_id: int, payload: TradeRequest, db: Session = Depends(get_db))
         raise HTTPException(
             status_code=422, detail="Quantity must be positive")
 
-    ship = None
-    if payload.ship_id is not None:
-        ship = db.query(Ship).filter(Ship.id == payload.ship_id).first()
-        if not ship:
-            raise HTTPException(status_code=404, detail="Ship not found")
+    if payload.ship_id is None:
+        raise HTTPException(status_code=422, detail="Ship ID is required")
 
-        if ship.docked_station_id != station_id:
-            raise HTTPException(
-                status_code=409,
-                detail="Ship must be docked at this station",
-            )
+    ship = db.query(Ship).filter(Ship.id == payload.ship_id).first()
+    if not ship:
+        raise HTTPException(status_code=404, detail="Ship not found")
+    if ship.owner_user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Ship access denied")
+    if ship.docked_station_id != station_id:
+        raise HTTPException(
+            status_code=409,
+            detail="Ship must be docked at this station",
+        )
 
     cargo_row = None
-    if ship is not None:
-        cargo_row = (
-            db.query(ShipCargo)
-            .filter(
-                ShipCargo.ship_id == ship.id,
-                ShipCargo.commodity_id == payload.commodity_id,
-            )
-            .first()
+    cargo_row = (
+        db.query(ShipCargo)
+        .filter(
+            ShipCargo.ship_id == ship.id,
+            ShipCargo.commodity_id == payload.commodity_id,
         )
+        .first()
+    )
 
     if payload.direction == "buy":
         if item.quantity < payload.qty:
             raise HTTPException(status_code=409, detail="Insufficient stock")
 
-        if ship is not None:
-            if ship.cargo_capacity <= 0:
-                raise HTTPException(
-                    status_code=409,
-                    detail="No cargo hold installed",
-                )
+        total_cost = int(item.buy_price) * payload.qty
+        user_credits = int(current_user.credits or 0)
+        if user_credits < total_cost:
+            raise HTTPException(status_code=409, detail="Insufficient credits")
 
-            current_used = (
-                db.query(ShipCargo)
-                .filter(ShipCargo.ship_id == ship.id)
-                .all()
+        if ship.cargo_capacity <= 0:
+            raise HTTPException(
+                status_code=409,
+                detail="No cargo hold installed",
             )
-            cargo_used = sum(row.quantity for row in current_used)
-            if cargo_used + payload.qty > ship.cargo_capacity:
-                raise HTTPException(
-                    status_code=409, detail="Cargo hold is full")
 
-            if cargo_row is None:
-                cargo_row = ShipCargo(
-                    ship_id=ship.id,
-                    commodity_id=payload.commodity_id,
-                    quantity=0,
-                )
-                db.add(cargo_row)
-            cargo_row.quantity += payload.qty
-            cargo_row.version = (cargo_row.version or 0) + 1
+        current_used = (
+            db.query(ShipCargo)
+            .filter(ShipCargo.ship_id == ship.id)
+            .all()
+        )
+        cargo_used = sum(row.quantity for row in current_used)
+        if cargo_used + payload.qty > ship.cargo_capacity:
+            raise HTTPException(
+                status_code=409, detail="Cargo hold is full")
+
+        if cargo_row is None:
+            cargo_row = ShipCargo(
+                ship_id=ship.id,
+                commodity_id=payload.commodity_id,
+                quantity=0,
+            )
+            db.add(cargo_row)
+        cargo_row.quantity += payload.qty
+        cargo_row.version = (cargo_row.version or 0) + 1
 
         item.quantity -= payload.qty
+        current_user.credits = user_credits - total_cost
     elif payload.direction == "sell":
-        if ship is not None:
-            if cargo_row is None or cargo_row.quantity < payload.qty:
-                raise HTTPException(
-                    status_code=409, detail="Insufficient cargo")
-            cargo_row.quantity -= payload.qty
-            cargo_row.version = (cargo_row.version or 0) + 1
+        if cargo_row is None or cargo_row.quantity < payload.qty:
+            raise HTTPException(
+                status_code=409, detail="Insufficient cargo")
+        cargo_row.quantity -= payload.qty
+        cargo_row.version = (cargo_row.version or 0) + 1
 
         item.quantity += payload.qty
+        current_user.credits = int(current_user.credits or 0) + (
+            int(item.sell_price) * payload.qty
+        )
     else:
         raise HTTPException(status_code=422, detail="Invalid direction")
 
     item.version = (item.version or 0) + 1
     db.commit()
 
-    return {"status": "ok", "remaining": item.quantity}
+    return {
+        "status": "ok",
+        "remaining": item.quantity,
+        "credits": int(current_user.credits or 0),
+    }

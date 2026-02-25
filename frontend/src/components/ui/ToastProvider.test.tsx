@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { ToastProvider, useToast } from "./ToastProvider";
 
@@ -29,6 +29,19 @@ function Harness() {
                 }}
             >
                 Success
+            </button>
+            <button
+                type="button"
+                onClick={() => {
+                    showToast({
+                        message: "Persistent notice.",
+                        variant: "info",
+                        durationMs: 20,
+                        persistent: true,
+                    });
+                }}
+            >
+                Persistent
             </button>
         </>
     );
@@ -82,5 +95,23 @@ describe("ToastProvider", () => {
         expect(() => render(<Broken />)).toThrow(
             "useToast must be used within ToastProvider"
         );
+    });
+
+    it("keeps persistent toasts visible after timeout", () => {
+        vi.useFakeTimers();
+
+        render(
+            <ToastProvider>
+                <Harness />
+            </ToastProvider>
+        );
+
+        fireEvent.click(screen.getByRole("button", { name: "Persistent" }));
+        expect(screen.getByText("Persistent notice.")).toBeInTheDocument();
+
+        vi.advanceTimersByTime(50);
+        expect(screen.getByText("Persistent notice.")).toBeInTheDocument();
+
+        vi.useRealTimers();
     });
 });

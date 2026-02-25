@@ -5,12 +5,59 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.models.ship import Ship
 from app.models.session import Session as DbSession
 from app.models.user import User
+from app.models.world import Station
 from app.schemas.auth import AuthResponse, LoginRequest, RegisterRequest
 from app.services.auth_service import hash_password, verify_password
 
 router = APIRouter()
+STARTER_CARGO_CAPACITY = 40
+
+
+def _ensure_user_starter_ship(db: Session, user: User) -> None:
+    """Ensure user has at least one ship with usable cargo capacity."""
+    ships = (
+        db.query(Ship)
+        .filter(Ship.owner_user_id == user.id)
+        .order_by(Ship.id.asc())
+        .all()
+    )
+
+    if ships:
+        if all(int(ship.cargo_capacity or 0) <= 0 for ship in ships):
+            primary_ship = ships[0]
+            primary_ship.cargo_capacity = STARTER_CARGO_CAPACITY
+            db.commit()
+        return
+
+    station = db.query(Station).order_by(Station.id.asc()).first()
+    docked_station_id = station.id if station else None
+    ship_status = "docked" if station else "in-space"
+
+    starter_ship = Ship(
+        owner_user_id=user.id,
+        name="Cobra Mk I",
+        hull_max=100,
+        hull_current=100,
+        shields_max=50,
+        shields_current=50,
+        energy_cap=60,
+        energy_current=60,
+        fuel_cap=100,
+        fuel_current=100,
+        cargo_capacity=STARTER_CARGO_CAPACITY,
+        status=ship_status,
+        docked_station_id=docked_station_id,
+    )
+    db.add(starter_ship)
+
+    if station and user.location_type is None:
+        user.location_type = "station"
+        user.location_id = station.id
+
+    db.commit()
 
 
 @router.post("/register", response_model=AuthResponse)
@@ -27,6 +74,7 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     db.add(user)
     db.commit()
     db.refresh(user)
+    _ensure_user_starter_ship(db, user)
 
     token = str(uuid.uuid4())
     session = DbSession(
@@ -55,6 +103,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
     db.add(session)
     db.commit()
 
+    _ensure_user_starter_ship(db, user)
     user.last_login_at = datetime.now(timezone.utc)
     db.commit()
 

@@ -16,6 +16,7 @@ type ToastInput = {
     message: string;
     variant?: ToastVariant;
     durationMs?: number;
+    persistent?: boolean;
     actionLabel?: string;
     onAction?: () => void;
 };
@@ -57,6 +58,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             message,
             variant = "info",
             durationMs = DEFAULT_DURATION_MS,
+            persistent = false,
             actionLabel,
             onAction,
         }: ToastInput) => {
@@ -69,7 +71,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 return next.slice(-MAX_TOASTS);
             });
 
-            if (durationMs > 0) {
+            if (!persistent && durationMs > 0) {
                 window.setTimeout(() => {
                     dismissToast(id);
                 }, durationMs);

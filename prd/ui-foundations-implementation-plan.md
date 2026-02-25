@@ -4,6 +4,8 @@ Status owner: Product + Frontend Engineering
 
 This plan tracks execution of UI foundation work in phased increments.
 
+Roadmap note (2026-02-19): Galactic chart planning was renumbered from Batch 10 to Batch 11 (`batch-11-galactic-chart-navigation-plan.md`).
+
 ## Phase Board
 
 ### Phase 1 — Tooltip Primitive

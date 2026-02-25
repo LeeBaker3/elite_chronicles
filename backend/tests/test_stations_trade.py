@@ -1,3 +1,6 @@
+from app.models.cargo import ShipCargo
+from app.models.ship import Ship
+from app.models.user import User
 from app.models.world import (
     Commodity,
     Faction,
@@ -6,9 +9,6 @@ from app.models.world import (
     StationArchetype,
     StationInventory,
 )
-from app.models.ship import Ship
-from app.models.user import User
-from app.models.cargo import ShipCargo
 
 
 def seed_inventory(db, quantity: int = 10):
@@ -79,20 +79,29 @@ def seed_inventory(db, quantity: int = 10):
     return station.id, commodity.id
 
 
-def seed_inventory_with_ship(db, quantity: int = 10, cargo_capacity: int = 5):
+def seed_inventory_with_ship(
+    db,
+    quantity: int = 10,
+    cargo_capacity: int = 5,
+    owner_user_id: int | None = None,
+):
     station_id, commodity_id = seed_inventory(db, quantity=quantity)
 
-    user = User(
-        email="shiptest@example.com",
-        username="shiptest",
-        password_hash="hash",
-        status="active",
-    )
-    db.add(user)
-    db.flush()
+    if owner_user_id is None:
+        user = User(
+            email="shiptest@example.com",
+            username="shiptest",
+            password_hash="hash",
+            status="active",
+        )
+        db.add(user)
+        db.flush()
+        owner_id = user.id
+    else:
+        owner_id = owner_user_id
 
     ship = Ship(
-        owner_user_id=user.id,
+        owner_user_id=owner_id,
         name="Test Ship",
         hull_max=100,
         hull_current=100,
@@ -112,46 +121,48 @@ def seed_inventory_with_ship(db, quantity: int = 10, cargo_capacity: int = 5):
     return station_id, commodity_id, ship.id
 
 
-def test_trade_buy_reduces_inventory(client, db_session):
+def auth_headers_for(client, email: str, username: str):
+    response = client.post(
+        "/api/auth/register",
+        json={
+            "email": email,
+            "username": username,
+            "password": "pilot123",
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    token = payload["token"]
+    return {"Authorization": f"Bearer {token}"}, payload["user_id"]
+
+
+def test_trade_requires_authentication(client, db_session):
     station_id, commodity_id = seed_inventory(db_session, quantity=10)
 
     response = client.post(
         f"/api/stations/{station_id}/trade",
-        json={"commodity_id": commodity_id, "qty": 3, "direction": "buy"},
+        json={
+            "commodity_id": commodity_id,
+            "qty": 1,
+            "direction": "buy",
+        },
     )
 
-    assert response.status_code == 200
-    assert response.json()["remaining"] == 7
+    assert response.status_code == 401
 
 
-def test_trade_buy_insufficient_stock(client, db_session):
-    station_id, commodity_id = seed_inventory(db_session, quantity=2)
-
-    response = client.post(
-        f"/api/stations/{station_id}/trade",
-        json={"commodity_id": commodity_id, "qty": 5, "direction": "buy"},
-    )
-
-    assert response.status_code == 409
-
-
-def test_trade_invalid_direction(client, db_session):
-    station_id, commodity_id = seed_inventory(db_session, quantity=2)
-
-    response = client.post(
-        f"/api/stations/{station_id}/trade",
-        json={"commodity_id": commodity_id, "qty": 1, "direction": "invalid"},
-    )
-
-    assert response.status_code == 422
-
-
-def test_trade_buy_fails_when_cargo_full(client, db_session):
+def test_trade_buy_reduces_inventory_and_credits(client, db_session):
+    headers, user_id = auth_headers_for(
+        client, "trader-1@example.com", "trader-1")
     station_id, commodity_id, ship_id = seed_inventory_with_ship(
         db_session,
         quantity=10,
-        cargo_capacity=2,
+        owner_user_id=user_id,
     )
+    user = db_session.query(User).filter(User.id == user_id).first()
+    assert user is not None
+    user.credits = 5_000
+    db_session.commit()
 
     response = client.post(
         f"/api/stations/{station_id}/trade",
@@ -161,6 +172,163 @@ def test_trade_buy_fails_when_cargo_full(client, db_session):
             "qty": 3,
             "direction": "buy",
         },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["remaining"] == 7
+    assert response.json()["credits"] == 4_700
+
+
+def test_trade_buy_insufficient_stock(client, db_session):
+    headers, user_id = auth_headers_for(
+        client, "trader-2@example.com", "trader-2")
+    station_id, commodity_id, ship_id = seed_inventory_with_ship(
+        db_session,
+        quantity=2,
+        owner_user_id=user_id,
+    )
+    user = db_session.query(User).filter(User.id == user_id).first()
+    assert user is not None
+    user.credits = 5_000
+    db_session.commit()
+
+    response = client.post(
+        f"/api/stations/{station_id}/trade",
+        json={
+            "ship_id": ship_id,
+            "commodity_id": commodity_id,
+            "qty": 5,
+            "direction": "buy",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 409
+
+
+def test_trade_buy_fails_with_insufficient_credits(client, db_session):
+    headers, user_id = auth_headers_for(
+        client, "low-credits@example.com", "low-credits")
+    station_id, commodity_id, ship_id = seed_inventory_with_ship(
+        db_session,
+        quantity=10,
+        owner_user_id=user_id,
+    )
+    user = db_session.query(User).filter(User.id == user_id).first()
+    assert user is not None
+    user.credits = 50
+    db_session.commit()
+
+    response = client.post(
+        f"/api/stations/{station_id}/trade",
+        json={
+            "ship_id": ship_id,
+            "commodity_id": commodity_id,
+            "qty": 1,
+            "direction": "buy",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["message"] == "Insufficient credits"
+
+
+def test_trade_invalid_direction(client, db_session):
+    headers, user_id = auth_headers_for(
+        client, "trader-3@example.com", "trader-3")
+    station_id, commodity_id, ship_id = seed_inventory_with_ship(
+        db_session,
+        quantity=2,
+        owner_user_id=user_id,
+    )
+
+    response = client.post(
+        f"/api/stations/{station_id}/trade",
+        json={
+            "ship_id": ship_id,
+            "commodity_id": commodity_id,
+            "qty": 1,
+            "direction": "invalid",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 422
+
+
+def test_trade_rejects_non_owner_ship(client, db_session):
+    owner_headers, owner_id = auth_headers_for(
+        client,
+        "owner-trade@example.com",
+        "owner-trade",
+    )
+    station_id, commodity_id, ship_id = seed_inventory_with_ship(
+        db_session,
+        quantity=10,
+        owner_user_id=owner_id,
+    )
+    owner = db_session.query(User).filter(User.id == owner_id).first()
+    assert owner is not None
+    owner.credits = 5_000
+    db_session.commit()
+
+    intruder_headers, _intruder_id = auth_headers_for(
+        client,
+        "intruder-trade@example.com",
+        "intruder-trade",
+    )
+
+    probe = client.post(
+        f"/api/stations/{station_id}/trade",
+        json={
+            "ship_id": ship_id,
+            "commodity_id": commodity_id,
+            "qty": 1,
+            "direction": "buy",
+        },
+        headers=owner_headers,
+    )
+    assert probe.status_code == 200
+
+    response = client.post(
+        f"/api/stations/{station_id}/trade",
+        json={
+            "ship_id": ship_id,
+            "commodity_id": commodity_id,
+            "qty": 1,
+            "direction": "buy",
+        },
+        headers=intruder_headers,
+    )
+
+    assert response.status_code == 403
+
+
+def test_trade_buy_fails_when_cargo_full(client, db_session):
+    headers, user_id = auth_headers_for(
+        client, "trader-4@example.com", "trader-4")
+    station_id, commodity_id, ship_id = seed_inventory_with_ship(
+        db_session,
+        quantity=10,
+        cargo_capacity=2,
+        owner_user_id=user_id,
+    )
+    user = db_session.query(User).filter(User.id == user_id).first()
+    assert user is not None
+    user.credits = 5_000
+    db_session.commit()
+
+    response = client.post(
+        f"/api/stations/{station_id}/trade",
+        json={
+            "ship_id": ship_id,
+            "commodity_id": commodity_id,
+            "qty": 3,
+            "direction": "buy",
+        },
+        headers=headers,
     )
 
     assert response.status_code == 409
@@ -168,10 +336,13 @@ def test_trade_buy_fails_when_cargo_full(client, db_session):
 
 
 def test_trade_sell_fails_when_insufficient_cargo(client, db_session):
+    headers, user_id = auth_headers_for(
+        client, "trader-5@example.com", "trader-5")
     station_id, commodity_id, ship_id = seed_inventory_with_ship(
         db_session,
         quantity=10,
         cargo_capacity=10,
+        owner_user_id=user_id,
     )
 
     response = client.post(
@@ -182,18 +353,26 @@ def test_trade_sell_fails_when_insufficient_cargo(client, db_session):
             "qty": 1,
             "direction": "sell",
         },
+        headers=headers,
     )
 
     assert response.status_code == 409
     assert response.json()["error"]["message"] == "Insufficient cargo"
 
 
-def test_trade_buy_then_sell_updates_cargo(client, db_session):
+def test_trade_buy_then_sell_updates_cargo_and_credits(client, db_session):
+    headers, user_id = auth_headers_for(
+        client, "trader-6@example.com", "trader-6")
     station_id, commodity_id, ship_id = seed_inventory_with_ship(
         db_session,
         quantity=10,
         cargo_capacity=10,
+        owner_user_id=user_id,
     )
+    user = db_session.query(User).filter(User.id == user_id).first()
+    assert user is not None
+    user.credits = 5_000
+    db_session.commit()
 
     buy = client.post(
         f"/api/stations/{station_id}/trade",
@@ -203,6 +382,7 @@ def test_trade_buy_then_sell_updates_cargo(client, db_session):
             "qty": 4,
             "direction": "buy",
         },
+        headers=headers,
     )
     assert buy.status_code == 200
 
@@ -225,8 +405,10 @@ def test_trade_buy_then_sell_updates_cargo(client, db_session):
             "qty": 2,
             "direction": "sell",
         },
+        headers=headers,
     )
     assert sell.status_code == 200
+    assert sell.json()["credits"] == 4_840
 
     cargo_after_sell = (
         db_session.query(ShipCargo)
