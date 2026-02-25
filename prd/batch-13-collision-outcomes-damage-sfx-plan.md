@@ -19,6 +19,17 @@ Current collision behavior is useful for warnings but not yet a full gameplay sy
 - player expectation is physical consequence (bounce, damage, destruction),
 - audio cues are now required for feedback quality and readability.
 
+## PRD Alignment (Required)
+
+### PRD Mapping
+
+| Batch Item | PRD Section | Requirement/Story Link | Notes |
+|---|---|---|---|
+| Collision outcome matrix | 5.4, 6.7 | Combat determinism and fairness | Typed per-object outcomes |
+| Destruction and recovery behavior | 5.13, 5.14 | Crash recovery and persistence | State-safe post-impact flow |
+| Escape capsule and rescue branch | 5.4, 5.13 | Survival path after destruction | Pickup or station transfer |
+| Impact SFX/feedback | 10, 11 | Readability and feedback quality | Cooldown and accessibility-safe |
+
 ## Execution Status Update (2026-02-20)
 
 Status: Planned
@@ -75,6 +86,14 @@ Status: Planned
 - Frontend tests for collision status transitions and user-visible feedback state.
 - Manual tuning pass for readability/feel at low, medium, and high speeds.
 
+### 8) Escape Capsule and Rescue Outcomes
+- Add escape capsule ejection branch when ship destruction occurs and capsule is available.
+- Add rescue outcomes:
+  - pickup by nearby eligible ship,
+  - fallback transfer to nearest reachable station when pickup does not occur.
+- Apply deterministic penalties/recovery effects for cargo, credits, and mission continuity.
+- Emit explicit operation logs and player-visible status transitions for ejection/rescue.
+
 ## Out of Scope (Explicit)
 
 - Full rigid-body physics simulation across all world objects.
@@ -126,6 +145,11 @@ Status: Planned
 - Additive feedback fields:
   - `sfx_event_key[]`,
   - `vfx_event_key[]`.
+- Additive survival fields:
+  - `escape_capsule_available`,
+  - `escape_capsule_state`,
+  - `rescue_outcome` (`picked_up` | `station_transfer` | `failed`),
+  - `rescue_target_id`.
 - Keep backward compatibility by making new fields optional for older clients.
 
 ## Implementation Sequence
@@ -146,6 +170,7 @@ Status: Planned
 - Ship-to-ship collision resolves with bounce + damage based on relative factors.
 - Ship-to-station high-speed impact can destroy player ship; low-speed contacts remain differentiated.
 - Collision VFX and SFX fire reliably and match severity.
+- Destroyed ships with installed escape capsules can eject and resolve into deterministic rescue outcomes.
 - Frontend lint/tests pass; targeted backend tests pass.
 
 ## Risks and Mitigations

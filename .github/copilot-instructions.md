@@ -103,6 +103,34 @@ Maintenance rules:
 - If scope grows, create follow-up issues and cross-link them explicitly.
 - During planning sessions, review board priority/order before implementation.
 
+## Batch Planning Standards (Required)
+
+When creating or updating any batch planning document in `prd/`:
+
+- Always start from `prd/batch-template.md`.
+- Name new batch docs using the established pattern:
+	- `prd/batch-XX-<topic>-plan.md`
+- Include a **PRD Alignment** section that maps each major batch workstream to exact sections in `prd/prd.md`.
+	- Use explicit section references (for example `5.3`, `5.3.2`, `5.14`).
+	- Do not use vague references like "scanner requirements" without section numbers.
+- Keep scope aligned to `prd/prd.md` goals, functional requirements, and user stories.
+	- If proposing scope beyond the current PRD, include a **PRD Update Needed** note with exact text/section deltas.
+- Every batch plan must include at minimum:
+	- Objective
+	- Why This Batch Next
+	- PRD Alignment
+	- Execution Status Update
+	- Readiness Checklist
+	- In Scope / Out of Scope
+	- Data and Contract Additions
+	- Implementation Sequence
+	- Acceptance Criteria
+	- Risks and Mitigations
+	- Test and Validation Evidence
+	- Documentation Update Checklist
+- Acceptance criteria in each batch must be testable and traceable back to mapped PRD sections.
+- Keep plans additive and maintain backward compatibility unless a breaking change is explicitly approved and documented.
+
 ## Example of Proper Documentation
 
 ```python

@@ -759,6 +759,36 @@ Phase 5: Expanded Universe
 - See [batch-12-audio-sfx-coverage-settings-plan.md](batch-12-audio-sfx-coverage-settings-plan.md) for cross-batch (01-09) audio special-effects coverage and configurable audio controls in settings.
 - Batch 12 item: use [batch-12-audio-event-key-table.md](batch-12-audio-event-key-table.md) as the canonical event-key mapping for implementation.
 
+15.9 Collision Outcomes + Escape Capsule + Rescue Batch
+- See [batch-13-collision-outcomes-damage-sfx-plan.md](batch-13-collision-outcomes-damage-sfx-plan.md) for collision outcome depth, impact feedback, and escape capsule/rescue branches.
+
+15.10 Real-Time Multiplayer and In-System Communications Batch
+- See [batch-14-realtime-multiplayer-comms-plan.md](batch-14-realtime-multiplayer-comms-plan.md) for WebSocket channel behavior, ship/player in-system communications, and delayed relay delivery beyond local scope.
+
+15.11 NPC Population Foundation Batch
+- See [batch-15-npc-population-framework-plan.md](batch-15-npc-population-framework-plan.md) for in-space and station NPC visibility and baseline behaviors.
+
+15.12 Archetype Expansion + Cargo Convoys Batch
+- See [batch-16-ship-station-convoy-expansion-plan.md](batch-16-ship-station-convoy-expansion-plan.md) for expanded ship/station types and cargo convoy economy actors.
+
+15.13 System Politics + Economy Coupling Batch
+- See [batch-17-system-politics-economy-coupling-plan.md](batch-17-system-politics-economy-coupling-plan.md) for political state progression and economy impact integration.
+
+15.14 Station Narrative + Missions Batch
+- See [batch-18-station-narrative-missions-plan.md](batch-18-station-narrative-missions-plan.md) for in-station text/chat-driven gameplay expansion and mission lifecycle integration.
+
+15.15 Combat Recovery Finalization Batch
+- See [batch-19-combat-rescue-escape-capsule-plan.md](batch-19-combat-rescue-escape-capsule-plan.md) for combat completion and survival/recovery outcomes.
+
+15.16 Admin, Moderation, and Operations Completion Batch
+- See [batch-20-admin-moderation-ops-completion-plan.md](batch-20-admin-moderation-ops-completion-plan.md) for full admin governance, moderation workflow, and live operations controls.
+
+15.17 Security, Reliability, Analytics, and Release Readiness Batch
+- See [batch-21-security-reliability-release-readiness-plan.md](batch-21-security-reliability-release-readiness-plan.md) for final hardening and launch readiness validation.
+
+15.18 PRD-to-Batch Alignment Matrix
+- See [batch-roadmap-requirement-alignment.md](batch-roadmap-requirement-alignment.md) for requirement coverage mapping and gap verification.
+
 16. Acceptance Criteria (High Level)
 - Players can register, login, and persist their ship state.
 - Players can trade at a station and see inventory update.
