@@ -3,3 +3,7 @@
 __pycache__/
 *.pyc
 .env
+
+# Runtime log files
+data/logs/*.log
+backend/data/logs/*.log
