@@ -677,7 +677,7 @@ describe("Home scanner to flight scene wiring", () => {
         local_target_contact_id: "station-101",
         local_target_status: "in-system-locked",
         transition_started_at: "2026-02-20T10:10:10Z",
-        audio_event_hints: ["nav.target_locked", "nav.approach_ready"],
+        audio_event_hints: ["chart.waypoint_lock", "ops.docking_request_accept"],
       },
     };
 
@@ -696,7 +696,9 @@ describe("Home scanner to flight scene wiring", () => {
       const statusLine = screen.getByTestId("flight-local-chart-state");
       expect(statusLine.textContent).toContain("Chart docking-approach");
       expect(statusLine.textContent).toContain("target in-system-locked (Vega Tradeport)");
-      expect(statusLine.textContent).toContain("hints nav.target_locked, nav.approach_ready");
+      expect(statusLine.textContent).toContain(
+        "hints chart.waypoint_lock, ops.docking_request_accept",
+      );
     });
   });
 
@@ -881,7 +883,7 @@ describe("Home scanner to flight scene wiring", () => {
         flight_phase: "docking-approach",
         local_target_contact_id: "station-101",
         local_target_status: "in-system-locked",
-        audio_event_hints: ["nav.target_locked", "nav.approach_ready"],
+        audio_event_hints: ["chart.waypoint_lock", "ops.docking_request_accept"],
       },
     };
 
@@ -906,7 +908,7 @@ describe("Home scanner to flight scene wiring", () => {
       screen.getByTestId("scanner-contact-target-badge-station-101").textContent,
     ).toContain("TARGET");
     expect(screen.getByTestId("scanner-chart-audio-hints").textContent).toContain(
-      "Chart hints: nav.target_locked, nav.approach_ready",
+      "Chart hints: chart.waypoint_lock, ops.docking_request_accept",
     );
   });
 
@@ -2567,6 +2569,56 @@ describe("Home scanner to flight scene wiring", () => {
     }
   });
 
+  it("dispatches canonical chart audio events for open, layer toggle, and waypoint lock", async () => {
+    const events: string[] = [];
+    const onAudioEvent = (event: Event) => {
+      const detail = (event as CustomEvent<{ event?: unknown }>).detail;
+      if (typeof detail?.event === "string") {
+        events.push(detail.event);
+      }
+    };
+    window.addEventListener("elite:flight-audio-event", onAudioEvent as EventListener);
+
+    try {
+      render(
+        <ToastProvider>
+          <Home />
+        </ToastProvider>,
+      );
+
+      const systemModeButton = (await screen.findAllByRole("button", {
+        name: /^System$/,
+      }))[0];
+      fireEvent.click(systemModeButton);
+
+      await waitFor(() => {
+        expect(events).toContain("chart.open");
+      });
+
+      const starLayerButton = await screen.findByTestId("local-chart-layer-star");
+      fireEvent.click(starLayerButton);
+      await waitFor(() => {
+        expect(events).toContain("chart.layer_toggle_off");
+      });
+
+      fireEvent.click(starLayerButton);
+      await waitFor(() => {
+        expect(events).toContain("chart.layer_toggle_on");
+      });
+
+      fireEvent.click(await screen.findByTestId("local-chart-row-station-101"));
+      fireEvent.click(screen.getByTestId("system-footer-waypoint"));
+      await waitFor(() => {
+        expect(events).toContain("chart.waypoint_lock");
+      });
+    } finally {
+      window.removeEventListener(
+        "elite:flight-audio-event",
+        onAudioEvent as EventListener,
+      );
+    }
+  });
+
   it("dedupes duplicate local chart audio hints before dispatch", async () => {
     localChartPayload = {
       ...localChartPayload,
@@ -2576,7 +2628,11 @@ describe("Home scanner to flight scene wiring", () => {
         local_target_contact_id: "station-101",
         local_target_status: "in-system-locked",
         transition_started_at: "2026-02-20T10:10:10Z",
-        audio_event_hints: ["nav.target_locked", "nav.target_locked", "nav.approach_ready"],
+        audio_event_hints: [
+          "chart.waypoint_lock",
+          "chart.waypoint_lock",
+          "ops.docking_request_accept",
+        ],
       },
     };
 
@@ -2597,8 +2653,8 @@ describe("Home scanner to flight scene wiring", () => {
       );
 
       await waitFor(() => {
-        expect(events.filter((eventName) => eventName === "nav.target_locked")).toHaveLength(1);
-        expect(events.filter((eventName) => eventName === "nav.approach_ready")).toHaveLength(1);
+        expect(events.filter((eventName) => eventName === "chart.waypoint_lock")).toHaveLength(1);
+        expect(events.filter((eventName) => eventName === "ops.docking_request_accept")).toHaveLength(1);
       });
     } finally {
       window.removeEventListener(

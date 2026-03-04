@@ -5,6 +5,11 @@ All notable changes to this project are documented in this file.
 ## [Unreleased] - 2026-02-13
 
 ### Added
+- Manifest-backed frontend media SFX system with canonical event-key mapping,
+  file-based audio resolver, and integrity tests:
+  - `frontend/src/components/audio/audioManifest.ts`
+  - `frontend/src/components/audio/audioManifest.test.ts`
+  - `frontend/public/audio/sfx/*`
 - Cross-batch core design governance and living design artifacts under
   `prd/design/`, including a canonical system index, reusable template,
   per-system design docs, and a code-truth implementation audit snapshot.
@@ -38,6 +43,17 @@ All notable changes to this project are documented in this file.
 - Backend tests for bootstrap real-name extraction/selection behavior (`backend/tests/test_bootstrap_known_star_systems.py`).
 
 ### Changed
+- Migrated frontend flight/scanner/chart/admin/comms/trade media playback from
+  generated tone data URIs to manifest-resolved WAV assets in
+  `frontend/public/audio/sfx`.
+- Expanded frontend audio event dispatch coverage in
+  `frontend/src/app/page.tsx` for scanner class cues, chart interactions,
+  docking/undocking phases, collision lifecycle, comms delivery states,
+  admin actions, and trade loop completion.
+- Aligned backend local-chart audio hint contract to canonical event names in
+  `backend/app/api/systems.py` and synchronized tests in
+  `backend/tests/test_systems_local_chart.py` and
+  `frontend/src/app/page.scanner-flight.test.tsx`.
 - Standardized market, cargo, and story panels to explicit loading/empty/error states.
 - Migrated recoverable UI failures to toast retry/action patterns.
 - Updated frontend docs with primitive usage, accessibility expectations, and test commands.

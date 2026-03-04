@@ -505,16 +505,14 @@ def _build_audio_event_hints(
 
     hints: list[str] = []
     if local_target_status == "in-system-locked":
-        hints.append("nav.target_locked")
+        hints.append("chart.waypoint_lock")
 
     if flight_phase == "docking-approach":
-        hints.append("nav.approach_ready")
-    elif flight_phase == "charging":
-        hints.append("jump.charge_start")
-    elif flight_phase == "jumping":
-        hints.append("jump.transit_peak")
+        hints.append("ops.docking_request_accept")
+    elif flight_phase == "charging" or flight_phase == "jumping":
+        hints.append("flight.jump_initiated")
     elif flight_phase == "arrived":
-        hints.append("jump.exit")
+        hints.append("flight.jump_arrived")
 
     return hints
 
