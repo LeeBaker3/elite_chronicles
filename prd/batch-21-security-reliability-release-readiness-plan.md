@@ -1,6 +1,6 @@
 # Batch 21 Implementation Plan — Security, Reliability, Analytics, and Release Readiness
 
-Date: 2026-02-25  
+Date: 2026-03-04  
 Owner: Product + Backend + Frontend
 
 ## Objective
@@ -26,9 +26,29 @@ Owner: Product + Backend + Frontend
 | Analytics instrumentation | 12 | DAU/retention/trade/chat/story KPIs | Dashboard-ready telemetry |
 | Final acceptance closure | 16 | High-level launch acceptance | Cross-system regression suite |
 
-## Execution Status Update (2026-02-25)
+## Core Design Alignment (Required)
+
+### Design Doc References
+
+- Canonical index: `prd/design/core-system-design-index.md`
+- Impacted design docs:
+  - `prd/design/core-auth-design.md`
+  - `prd/design/core-admin-ops-design.md`
+  - `prd/design/core-player-state-design.md`
+  - `prd/design/core-comms-design.md`
+
+### Design Alignment Rules
+
+- Update impacted design docs in the same PR as behavior changes.
+- Keep changes additive and cross-batch; avoid one-off design files.
+- If scope expands beyond current design docs, add a new core/integration
+  doc and register it in the canonical index.
+
+## Execution Status Update (2026-03-04)
 
 Status: Planned
+- Governance Update: Completed (core design alignment integrated).
+- Implementation Readiness: Pending (readiness checklist not yet complete).
 
 ## Readiness Checklist (Pre-Implementation Gate)
 
@@ -36,6 +56,7 @@ Status: Planned
 - [ ] Security test matrix is defined.
 - [ ] Reliability and failover scenarios are documented.
 - [ ] Launch metrics and success thresholds are approved.
+- [ ] Impacted `prd/design/` docs are reviewed and linked.
 
 ## In Scope
 
@@ -135,4 +156,6 @@ Status: Planned
 ## Documentation Update Checklist
 
 - [ ] `prd/prd.md` reviewed for alignment.
+- [ ] `prd/design/core-system-design-index.md` reviewed for impacted docs.
+- [ ] Impacted `prd/design/*.md` docs updated in this batch.
 - [ ] Batch status and release evidence updated.

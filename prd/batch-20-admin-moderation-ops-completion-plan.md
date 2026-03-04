@@ -1,6 +1,6 @@
 # Batch 20 Implementation Plan — Admin, Moderation, and Operations Control Plane Completion
 
-Date: 2026-02-25  
+Date: 2026-03-04  
 Owner: Product + Backend + Frontend
 
 ## Objective
@@ -25,15 +25,36 @@ Owner: Product + Backend + Frontend
 | Content moderation queue | 5.8, 13 | AI and chat abuse risk mitigation | Review, approve/remove flow |
 | Live settings controls | 5.11, 9, 11 | Runtime economy/story/system tuning | Audited settings updates |
 
-## Execution Status Update (2026-02-25)
+## Core Design Alignment (Required)
+
+### Design Doc References
+
+- Canonical index: `prd/design/core-system-design-index.md`
+- Impacted design docs:
+  - `prd/design/core-admin-ops-design.md`
+  - `prd/design/core-auth-design.md`
+  - `prd/design/core-comms-design.md`
+  - `prd/design/core-story-ai-design.md`
+
+### Design Alignment Rules
+
+- Update impacted design docs in the same PR as behavior changes.
+- Keep changes additive and cross-batch; avoid one-off design files.
+- If scope expands beyond current design docs, add a new core/integration
+  doc and register it in the canonical index.
+
+## Execution Status Update (2026-03-04)
 
 Status: Planned
+- Governance Update: Completed (core design alignment integrated).
+- Implementation Readiness: Pending (readiness checklist not yet complete).
 
 ## Readiness Checklist (Pre-Implementation Gate)
 
 - [ ] Admin permission boundaries verified end-to-end.
 - [ ] Moderation queue schema and retention policy defined.
 - [ ] Metrics and settings audit requirements documented.
+- [ ] Impacted `prd/design/` docs are reviewed and linked.
 
 ## In Scope
 
@@ -129,4 +150,6 @@ Status: Planned
 ## Documentation Update Checklist
 
 - [ ] `prd/prd.md` reviewed for alignment.
+- [ ] `prd/design/core-system-design-index.md` reviewed for impacted docs.
+- [ ] Impacted `prd/design/*.md` docs updated in this batch.
 - [ ] Batch status updated with evidence.
