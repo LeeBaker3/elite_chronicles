@@ -178,8 +178,8 @@ def test_system_local_chart_exposes_in_system_target_metadata(
     assert mutable_state["local_target_contact_type"] == "station"
     assert mutable_state["local_target_contact_id"] == f"station-{state['station_1_id']}"
     assert mutable_state["local_target_status"] == "in-system-locked"
-    assert "nav.target_locked" in mutable_state["audio_event_hints"]
-    assert "nav.approach_ready" in mutable_state["audio_event_hints"]
+    assert "chart.waypoint_lock" in mutable_state["audio_event_hints"]
+    assert "ops.docking_request_accept" in mutable_state["audio_event_hints"]
 
 
 def test_system_local_chart_exposes_out_of_system_target_metadata(
@@ -258,8 +258,46 @@ def test_system_local_chart_exposes_out_of_system_target_metadata(
     assert mutable_state["local_target_contact_id"] is None
     assert mutable_state["local_target_status"] == "out-of-system-locked"
     assert mutable_state["transition_started_at"] is not None
-    assert "jump.charge_start" in mutable_state["audio_event_hints"]
-    assert "nav.target_locked" not in mutable_state["audio_event_hints"]
+    assert "flight.jump_initiated" in mutable_state["audio_event_hints"]
+    assert "chart.waypoint_lock" not in mutable_state["audio_event_hints"]
+
+
+def test_system_local_chart_arrived_phase_emits_jump_arrived_hint(
+    client,
+    db_session,
+):
+    headers = auth_headers_for(
+        client, "chart-target-arrived@example.com", "chart-target-arrived")
+    owner = db_session.query(User).filter(
+        User.email == "chart-target-arrived@example.com"
+    ).first()
+    assert owner is not None
+    state = seed_core_state(db_session, owner_user_id=owner.id)
+
+    ship = (
+        db_session.query(Ship)
+        .filter(Ship.owner_user_id == owner.id)
+        .order_by(Ship.id.asc())
+        .first()
+    )
+    assert ship is not None
+    ship.flight_phase = "arrived"
+    ship.flight_phase_started_at = datetime.now(
+        timezone.utc) - timedelta(seconds=5)
+    ship.flight_locked_destination_station_id = state["station_1_id"]
+    db_session.commit()
+
+    response = client.get(
+        f"/api/systems/{state['system_id']}/local-chart",
+        headers=headers,
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    mutable_state = payload["mutable_state"]
+
+    assert mutable_state["flight_phase"] == "arrived"
+    assert "flight.jump_arrived" in mutable_state["audio_event_hints"]
+    assert "chart.waypoint_lock" in mutable_state["audio_event_hints"]
 
 
 def test_system_local_chart_exposes_planet_target_metadata(

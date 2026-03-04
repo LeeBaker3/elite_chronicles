@@ -11,8 +11,13 @@ import { DataState } from "../components/ui/DataState";
 import {
   createBrowserAudioContext,
   FlightAudioAdapter,
+  type FlightAudioEventName as AdapterFlightAudioEventName,
   type FlightAudioPlaybackResult,
 } from "../components/audio/flightAudioAdapter";
+import {
+  FLIGHT_MEDIA_AUDIO_DIAGNOSTIC_URI,
+  resolveFlightMediaAudioSfxUri,
+} from "../components/audio/audioManifest";
 import { resolveChartPointVisual } from "../components/ui/celestialVisuals";
 import { useToast } from "../components/ui/ToastProvider";
 import { Tooltip } from "../components/ui/Tooltip";
@@ -68,6 +73,47 @@ type LocalTargetStatus =
   | "out-of-system-locked"
   | "unknown-target";
 type FlightAudioEventName =
+  | "ops.dock_success"
+  | "ops.dock_reject"
+  | "ops.undock_success"
+  | "ops.refuel_success"
+  | "admin.market_tick_success"
+  | "admin.market_tick_fail"
+  | "admin.logs_refresh"
+  | "comms.local_send"
+  | "comms.relay_queued"
+  | "comms.relay_delivered"
+  | "admin.user_update_success"
+  | "admin.user_update_fail"
+  | "flight.destination_selected"
+  | "flight.jump_initiated"
+  | "flight.jump_arrived"
+  | "trade.loop_step_complete"
+  | "flight.engine_loop_start"
+  | "flight.traffic_flyby"
+  | "flight.mode_confirm"
+  | "scanner.ping"
+  | "scanner.contact_selected"
+  | "scanner.contact_class_star"
+  | "scanner.contact_class_planet"
+  | "scanner.contact_class_station"
+  | "scanner.contact_class_ship"
+  | "ops.docking_request_accept"
+  | "ops.docking_request_reject"
+  | "flight.docked_bay_ambience_start"
+  | "ops.undock_launch"
+  | "collision.glancing_hit"
+  | "collision.critical_hit"
+  | "collision.warning_alarm"
+  | "ops.crash_recovery_start"
+  | "ops.crash_recovery_complete"
+  | "chart.open"
+  | "chart.sync_success"
+  | "chart.sync_fail"
+  | "chart.waypoint_lock"
+  | "chart.waypoint_unlock"
+  | "chart.layer_toggle_on"
+  | "chart.layer_toggle_off"
   | "nav.target_acquired"
   | "nav.target_locked"
   | "nav.invalid_action"
@@ -115,6 +161,47 @@ const FLIGHT_DOCKING_TRANSIT_DURATION_MS = 3600;
 const FLIGHT_UNDOCKING_TRANSIT_DURATION_MS = 4400;
 const FLIGHT_AUDIO_CATEGORY_WINDOW_MS = 1400;
 const FLIGHT_AUDIO_EVENT_CATEGORY: Record<FlightAudioEventName, FlightAudioCategory> = {
+  "ops.dock_success": "docking",
+  "ops.dock_reject": "navigation",
+  "ops.undock_success": "docking",
+  "ops.refuel_success": "navigation",
+  "admin.market_tick_success": "navigation",
+  "admin.market_tick_fail": "navigation",
+  "admin.logs_refresh": "navigation",
+  "comms.local_send": "navigation",
+  "comms.relay_queued": "navigation",
+  "comms.relay_delivered": "navigation",
+  "admin.user_update_success": "navigation",
+  "admin.user_update_fail": "navigation",
+  "flight.destination_selected": "navigation",
+  "flight.jump_initiated": "jump",
+  "flight.jump_arrived": "jump",
+  "trade.loop_step_complete": "navigation",
+  "flight.engine_loop_start": "propulsion",
+  "flight.traffic_flyby": "propulsion",
+  "flight.mode_confirm": "navigation",
+  "scanner.ping": "navigation",
+  "scanner.contact_selected": "navigation",
+  "scanner.contact_class_star": "navigation",
+  "scanner.contact_class_planet": "navigation",
+  "scanner.contact_class_station": "docking",
+  "scanner.contact_class_ship": "propulsion",
+  "ops.docking_request_accept": "docking",
+  "ops.docking_request_reject": "navigation",
+  "flight.docked_bay_ambience_start": "propulsion",
+  "ops.undock_launch": "docking",
+  "collision.glancing_hit": "jump",
+  "collision.critical_hit": "jump",
+  "collision.warning_alarm": "jump",
+  "ops.crash_recovery_start": "jump",
+  "ops.crash_recovery_complete": "jump",
+  "chart.open": "navigation",
+  "chart.sync_success": "navigation",
+  "chart.sync_fail": "navigation",
+  "chart.waypoint_lock": "navigation",
+  "chart.waypoint_unlock": "navigation",
+  "chart.layer_toggle_on": "navigation",
+  "chart.layer_toggle_off": "navigation",
   "nav.target_acquired": "navigation",
   "nav.target_locked": "navigation",
   "nav.invalid_action": "navigation",
@@ -134,6 +221,47 @@ const FLIGHT_AUDIO_EVENT_CATEGORY: Record<FlightAudioEventName, FlightAudioCateg
   "jump.hyperspace_exit_stabilize": "jump",
 };
 const FLIGHT_AUDIO_EVENT_COOLDOWN_MS: Record<FlightAudioEventName, number> = {
+  "ops.dock_success": 200,
+  "ops.dock_reject": 300,
+  "ops.undock_success": 200,
+  "ops.refuel_success": 250,
+  "admin.market_tick_success": 250,
+  "admin.market_tick_fail": 350,
+  "admin.logs_refresh": 250,
+  "comms.local_send": 150,
+  "comms.relay_queued": 250,
+  "comms.relay_delivered": 300,
+  "admin.user_update_success": 250,
+  "admin.user_update_fail": 350,
+  "flight.destination_selected": 200,
+  "flight.jump_initiated": 500,
+  "flight.jump_arrived": 600,
+  "trade.loop_step_complete": 250,
+  "flight.engine_loop_start": 1200,
+  "flight.traffic_flyby": 1200,
+  "flight.mode_confirm": 200,
+  "scanner.ping": 500,
+  "scanner.contact_selected": 180,
+  "scanner.contact_class_star": 250,
+  "scanner.contact_class_planet": 250,
+  "scanner.contact_class_station": 250,
+  "scanner.contact_class_ship": 250,
+  "ops.docking_request_accept": 250,
+  "ops.docking_request_reject": 350,
+  "flight.docked_bay_ambience_start": 1400,
+  "ops.undock_launch": 500,
+  "collision.glancing_hit": 350,
+  "collision.critical_hit": 500,
+  "collision.warning_alarm": 1200,
+  "ops.crash_recovery_start": 600,
+  "ops.crash_recovery_complete": 500,
+  "chart.open": 250,
+  "chart.sync_success": 220,
+  "chart.sync_fail": 350,
+  "chart.waypoint_lock": 220,
+  "chart.waypoint_unlock": 220,
+  "chart.layer_toggle_on": 120,
+  "chart.layer_toggle_off": 120,
   "nav.target_acquired": 180,
   "nav.target_locked": 450,
   "nav.invalid_action": 700,
@@ -153,159 +281,84 @@ const FLIGHT_AUDIO_EVENT_COOLDOWN_MS: Record<FlightAudioEventName, number> = {
   "jump.hyperspace_exit_stabilize": 1200,
 };
 const FLIGHT_AUDIO_CATEGORY_MAX_EVENTS: Record<FlightAudioCategory, number> = {
-  navigation: 6,
+  navigation: 12,
   propulsion: 4,
   jump: 4,
   docking: 2,
 };
 
-const FLIGHT_AUDIO_EVENT_NAMES = new Set<FlightAudioEventName>([
-  "nav.target_acquired",
-  "nav.target_locked",
-  "nav.invalid_action",
-  "nav.approach_ready",
-  "dock.transit_enter",
-  "dock.transit_exit",
-  "flight.throttle_accel",
-  "flight.throttle_decel",
-  "flight.motion_loop",
-  "jump.charge_start",
-  "jump.transit_peak",
-  "jump.hyperspace_charge_start",
-  "jump.hyperspace_transit_peak",
-  "jump.exit",
-  "jump.exit_stabilize",
-  "jump.hyperspace_exit",
-  "jump.hyperspace_exit_stabilize",
-]);
+const FLIGHT_AUDIO_EVENT_NAMES = new Set<FlightAudioEventName>(
+  Object.keys(FLIGHT_AUDIO_EVENT_CATEGORY) as FlightAudioEventName[],
+);
 
 const FLIGHT_MEDIA_REDUCED_AUDIO_EVENTS = new Set<FlightAudioEventName>([
   "flight.motion_loop",
   "flight.throttle_accel",
   "flight.throttle_decel",
+  "flight.engine_loop_start",
+  "flight.traffic_flyby",
+  "flight.docked_bay_ambience_start",
 ]);
 
-const FLIGHT_MEDIA_AUDIO_CUE_MAP: Record<FlightAudioEventName, {
-  frequencyStartHz: number;
-  frequencyEndHz?: number;
-  durationSeconds: number;
-  amplitude: number;
-  waveform: "sine" | "triangle" | "sawtooth" | "square" | "hybrid";
-}> = {
-  "nav.target_acquired": {
-    frequencyStartHz: 660,
-    durationSeconds: 0.08,
-    amplitude: 0.5,
-    waveform: "triangle",
-  },
-  "nav.target_locked": {
-    frequencyStartHz: 740,
-    durationSeconds: 0.1,
-    amplitude: 0.52,
-    waveform: "triangle",
-  },
-  "nav.invalid_action": {
-    frequencyStartHz: 220,
-    durationSeconds: 0.16,
-    amplitude: 0.45,
-    waveform: "sawtooth",
-  },
-  "nav.approach_ready": {
-    frequencyStartHz: 520,
-    durationSeconds: 0.12,
-    amplitude: 0.46,
-    waveform: "triangle",
-  },
-  "dock.transit_enter": {
-    frequencyStartHz: 300,
-    frequencyEndHz: 260,
-    durationSeconds: 0.22,
-    amplitude: 0.5,
-    waveform: "hybrid",
-  },
-  "dock.transit_exit": {
-    frequencyStartHz: 560,
-    frequencyEndHz: 620,
-    durationSeconds: 0.16,
-    amplitude: 0.52,
-    waveform: "triangle",
-  },
-  "flight.throttle_accel": {
-    frequencyStartHz: 180,
-    frequencyEndHz: 220,
-    durationSeconds: 0.12,
-    amplitude: 0.36,
-    waveform: "sine",
-  },
-  "flight.throttle_decel": {
-    frequencyStartHz: 150,
-    frequencyEndHz: 120,
-    durationSeconds: 0.12,
-    amplitude: 0.36,
-    waveform: "sine",
-  },
-  "flight.motion_loop": {
-    frequencyStartHz: 120,
-    durationSeconds: 0.14,
-    amplitude: 0.3,
-    waveform: "sine",
-  },
-  "jump.charge_start": {
-    frequencyStartHz: 140,
-    frequencyEndHz: 320,
-    durationSeconds: 0.44,
-    amplitude: 0.72,
-    waveform: "hybrid",
-  },
-  "jump.transit_peak": {
-    frequencyStartHz: 980,
-    frequencyEndHz: 640,
-    durationSeconds: 0.36,
-    amplitude: 0.86,
-    waveform: "square",
-  },
-  "jump.hyperspace_charge_start": {
-    frequencyStartHz: 120,
-    frequencyEndHz: 420,
-    durationSeconds: 0.54,
-    amplitude: 0.9,
-    waveform: "hybrid",
-  },
-  "jump.hyperspace_transit_peak": {
-    frequencyStartHz: 1220,
-    frequencyEndHz: 540,
-    durationSeconds: 0.42,
-    amplitude: 0.92,
-    waveform: "square",
-  },
-  "jump.exit": {
-    frequencyStartHz: 700,
-    frequencyEndHz: 500,
-    durationSeconds: 0.3,
-    amplitude: 0.72,
-    waveform: "triangle",
-  },
-  "jump.exit_stabilize": {
-    frequencyStartHz: 520,
-    frequencyEndHz: 340,
-    durationSeconds: 0.46,
-    amplitude: 0.62,
-    waveform: "hybrid",
-  },
-  "jump.hyperspace_exit": {
-    frequencyStartHz: 880,
-    frequencyEndHz: 460,
-    durationSeconds: 0.34,
-    amplitude: 0.88,
-    waveform: "hybrid",
-  },
-  "jump.hyperspace_exit_stabilize": {
-    frequencyStartHz: 420,
-    frequencyEndHz: 260,
-    durationSeconds: 0.52,
-    amplitude: 0.68,
-    waveform: "triangle",
-  },
+const FLIGHT_AUDIO_ADAPTER_EVENT_MAP: Partial<Record<FlightAudioEventName, AdapterFlightAudioEventName>> = {
+  "nav.target_acquired": "nav.target_acquired",
+  "nav.target_locked": "nav.target_locked",
+  "nav.invalid_action": "nav.invalid_action",
+  "nav.approach_ready": "nav.approach_ready",
+  "dock.transit_enter": "dock.transit_enter",
+  "dock.transit_exit": "dock.transit_exit",
+  "flight.throttle_accel": "flight.throttle_accel",
+  "flight.throttle_decel": "flight.throttle_decel",
+  "flight.motion_loop": "flight.motion_loop",
+  "jump.charge_start": "jump.charge_start",
+  "jump.transit_peak": "jump.transit_peak",
+  "jump.hyperspace_charge_start": "jump.hyperspace_charge_start",
+  "jump.hyperspace_transit_peak": "jump.hyperspace_transit_peak",
+  "jump.exit": "jump.exit",
+  "jump.exit_stabilize": "jump.exit_stabilize",
+  "jump.hyperspace_exit": "jump.hyperspace_exit",
+  "jump.hyperspace_exit_stabilize": "jump.hyperspace_exit_stabilize",
+  "ops.dock_success": "dock.transit_exit",
+  "ops.dock_reject": "nav.invalid_action",
+  "ops.undock_success": "nav.approach_ready",
+  "ops.refuel_success": "nav.approach_ready",
+  "admin.market_tick_success": "nav.target_acquired",
+  "admin.market_tick_fail": "nav.invalid_action",
+  "admin.logs_refresh": "nav.target_acquired",
+  "comms.local_send": "nav.target_acquired",
+  "comms.relay_queued": "nav.approach_ready",
+  "comms.relay_delivered": "nav.target_locked",
+  "admin.user_update_success": "nav.target_acquired",
+  "admin.user_update_fail": "nav.invalid_action",
+  "flight.destination_selected": "nav.target_acquired",
+  "flight.jump_initiated": "jump.charge_start",
+  "flight.jump_arrived": "jump.exit",
+  "trade.loop_step_complete": "nav.approach_ready",
+  "flight.engine_loop_start": "flight.motion_loop",
+  "flight.traffic_flyby": "flight.throttle_accel",
+  "flight.mode_confirm": "nav.target_acquired",
+  "scanner.ping": "nav.target_acquired",
+  "scanner.contact_selected": "nav.target_locked",
+  "scanner.contact_class_star": "jump.transit_peak",
+  "scanner.contact_class_planet": "nav.approach_ready",
+  "scanner.contact_class_station": "dock.transit_enter",
+  "scanner.contact_class_ship": "flight.throttle_accel",
+  "ops.docking_request_accept": "nav.approach_ready",
+  "ops.docking_request_reject": "nav.invalid_action",
+  "flight.docked_bay_ambience_start": "flight.motion_loop",
+  "ops.undock_launch": "dock.transit_enter",
+  "collision.glancing_hit": "nav.invalid_action",
+  "collision.critical_hit": "jump.hyperspace_transit_peak",
+  "collision.warning_alarm": "jump.hyperspace_charge_start",
+  "ops.crash_recovery_start": "jump.hyperspace_charge_start",
+  "ops.crash_recovery_complete": "jump.exit",
+  "chart.open": "nav.target_acquired",
+  "chart.sync_success": "nav.approach_ready",
+  "chart.sync_fail": "nav.invalid_action",
+  "chart.waypoint_lock": "nav.target_locked",
+  "chart.waypoint_unlock": "nav.target_acquired",
+  "chart.layer_toggle_on": "nav.target_acquired",
+  "chart.layer_toggle_off": "nav.invalid_action",
 };
 
 const parseFlightAudioEventName = (value: unknown): FlightAudioEventName | null => {
@@ -317,81 +370,14 @@ const parseFlightAudioEventName = (value: unknown): FlightAudioEventName | null 
     : null;
 };
 
-const createMediaToneWavDataUri = (
-  frequencyStartHz: number,
-  frequencyEndHz: number,
-  durationSeconds: number,
-  amplitude: number,
-  waveform: "sine" | "triangle" | "sawtooth" | "square" | "hybrid",
-): string => {
-  const sampleRate = 48_000;
-  const sampleCount = Math.floor(sampleRate * durationSeconds);
-  const dataSize = sampleCount * 2;
-  const totalSize = 44 + dataSize;
-  const buffer = new ArrayBuffer(totalSize);
-  const view = new DataView(buffer);
-
-  const writeAscii = (offset: number, value: string): void => {
-    for (let index = 0; index < value.length; index += 1) {
-      view.setUint8(offset + index, value.charCodeAt(index));
-    }
-  };
-
-  writeAscii(0, "RIFF");
-  view.setUint32(4, totalSize - 8, true);
-  writeAscii(8, "WAVE");
-  writeAscii(12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * 2, true);
-  view.setUint16(32, 2, true);
-  view.setUint16(34, 16, true);
-  writeAscii(36, "data");
-  view.setUint32(40, dataSize, true);
-
-  for (let sampleIndex = 0; sampleIndex < sampleCount; sampleIndex += 1) {
-    const time = sampleIndex / sampleRate;
-    const progress = sampleIndex / Math.max(1, sampleCount - 1);
-    const frequencyHz = (
-      frequencyStartHz
-      + ((frequencyEndHz - frequencyStartHz) * progress)
-    );
-    const phase = 2 * Math.PI * frequencyHz * time;
-    const attack = Math.min(1, time / 0.04);
-    const release = Math.min(1, (durationSeconds - time) / 0.16);
-    const envelope = Math.max(0, Math.min(1, attack, release));
-
-    const sine = Math.sin(phase);
-    const square = Math.sign(sine);
-    const saw = 2 * ((frequencyHz * time) - Math.floor(0.5 + (frequencyHz * time)));
-    const triangle = (2 / Math.PI) * Math.asin(sine);
-
-    const waveformSample = waveform === "sine"
-      ? sine
-      : waveform === "square"
-        ? square
-        : waveform === "sawtooth"
-          ? saw
-          : waveform === "triangle"
-            ? triangle
-            : (0.45 * saw) + (0.35 * triangle) + (0.2 * sine);
-
-    const layered = waveformSample + (0.2 * Math.sin(phase * 0.5));
-    const shaped = Math.tanh(layered * 1.25);
-    const sample = shaped * amplitude * envelope;
-    view.setInt16(44 + (sampleIndex * 2), Math.max(-1, Math.min(1, sample)) * 32767, true);
-  }
-
-  let binary = "";
-  const bytes = new Uint8Array(buffer);
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
-  }
-
-  return `data:audio/wav;base64,${btoa(binary)}`;
-};
+const createFlightAudioEventTimestampMap = (): Record<FlightAudioEventName, number> => (
+  Object.fromEntries(
+    (Object.keys(FLIGHT_AUDIO_EVENT_CATEGORY) as FlightAudioEventName[]).map((eventName) => [
+      eventName,
+      0,
+    ]),
+  ) as Record<FlightAudioEventName, number>
+);
 
 const FLIGHT_PHASE_VALUES = new Set<FlightJumpPhase>(Object.values(FLIGHT_PHASE));
 const LOCAL_TARGET_STATUS_VALUES = new Set<LocalTargetStatus>([
@@ -418,10 +404,6 @@ const parseLocalTargetStatus = (value: unknown): LocalTargetStatus | null => {
     ? (value as LocalTargetStatus)
     : null;
 };
-
-const createMediaDiagnosticWavDataUri = (): string => (
-  createMediaToneWavDataUri(880, 880, 1.2, 0.85, "square")
-);
 
 const isTransitFlightPhase = (phase: FlightJumpPhase): boolean => (
   phase === FLIGHT_PHASE.DOCKING_TRANSIT_IN
@@ -1831,25 +1813,9 @@ export default function Home() {
   const previousFuelAlertLevelRef = useRef<FuelAlertLevel>("normal");
   const previousFuelAlertShipIdRef = useRef<number | null>(null);
   const localChartHintDispatchSignatureRef = useRef("");
-  const flightAudioLastEventAtRef = useRef<Record<FlightAudioEventName, number>>({
-    "nav.target_acquired": 0,
-    "nav.target_locked": 0,
-    "nav.invalid_action": 0,
-    "nav.approach_ready": 0,
-    "dock.transit_enter": 0,
-    "dock.transit_exit": 0,
-    "flight.throttle_accel": 0,
-    "flight.throttle_decel": 0,
-    "flight.motion_loop": 0,
-    "jump.charge_start": 0,
-    "jump.transit_peak": 0,
-    "jump.hyperspace_charge_start": 0,
-    "jump.hyperspace_transit_peak": 0,
-    "jump.exit": 0,
-    "jump.exit_stabilize": 0,
-    "jump.hyperspace_exit": 0,
-    "jump.hyperspace_exit_stabilize": 0,
-  });
+  const flightAudioLastEventAtRef = useRef<Record<FlightAudioEventName, number>>(
+    createFlightAudioEventTimestampMap(),
+  );
   const flightAudioCategoryWindowRef = useRef<Record<FlightAudioCategory, number[]>>({
     navigation: [],
     propulsion: [],
@@ -1911,14 +1877,7 @@ export default function Home() {
       return false;
     }
 
-    if (
-      reducedAudioEnabled
-      && (
-        eventName === "flight.motion_loop"
-        || eventName === "flight.throttle_accel"
-        || eventName === "flight.throttle_decel"
-      )
-    ) {
+    if (reducedAudioEnabled && FLIGHT_MEDIA_REDUCED_AUDIO_EVENTS.has(eventName)) {
       setFlightAudioDispatchSummary((current) => ({
         ...current,
         blockedSettingsCount: current.blockedSettingsCount + 1,
@@ -1985,25 +1944,6 @@ export default function Home() {
       createBrowserAudioContext,
     )
   ), [flightAudioEnabled, reducedAudioEnabled]);
-  const mediaAudioDiagnosticWavUri = useMemo(
-    () => createMediaDiagnosticWavDataUri(),
-    [],
-  );
-  const mediaAudioCueUriByEvent = useMemo(
-    () => Object.fromEntries(
-      Object.entries(FLIGHT_MEDIA_AUDIO_CUE_MAP).map(([eventName, cue]) => [
-        eventName,
-        createMediaToneWavDataUri(
-          cue.frequencyStartHz,
-          cue.frequencyEndHz ?? cue.frequencyStartHz,
-          cue.durationSeconds,
-          cue.amplitude,
-          cue.waveform,
-        ),
-      ]),
-    ) as Record<FlightAudioEventName, string>,
-    [],
-  );
 
   const playFlightMediaAudioEvent = useCallback(async (
     eventName: FlightAudioEventName,
@@ -2016,20 +1956,21 @@ export default function Home() {
       return "blocked_reduced";
     }
 
-    const toneUri = mediaAudioCueUriByEvent[eventName];
+    const toneUri = resolveFlightMediaAudioSfxUri(eventName);
     if (!toneUri) {
       return "error";
     }
 
     try {
       const audio = new Audio(toneUri);
+      audio.preload = "auto";
       audio.volume = 1;
       await audio.play();
       return "played";
     } catch {
       return "error";
     }
-  }, [flightAudioEnabled, mediaAudioCueUriByEvent, reducedAudioEnabled]);
+  }, [flightAudioEnabled, reducedAudioEnabled]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -2063,7 +2004,13 @@ export default function Home() {
         return;
       }
 
-      applyPlaybackResult(flightAudioAdapter.play(parsedEventName));
+      const adapterEventName = FLIGHT_AUDIO_ADAPTER_EVENT_MAP[parsedEventName];
+      if (adapterEventName) {
+        applyPlaybackResult(flightAudioAdapter.play(adapterEventName));
+        return;
+      }
+
+      void playFlightMediaAudioEvent(parsedEventName).then(applyPlaybackResult);
     };
 
     window.addEventListener("elite:flight-audio-event", onFlightAudioEvent as EventListener);
@@ -2125,7 +2072,8 @@ export default function Home() {
     }
 
     try {
-      const diagnosticAudio = new Audio(mediaAudioDiagnosticWavUri);
+      const diagnosticAudio = new Audio(FLIGHT_MEDIA_AUDIO_DIAGNOSTIC_URI);
+      diagnosticAudio.preload = "auto";
       diagnosticAudio.volume = 1;
       await diagnosticAudio.play();
       const message = "Media audio diagnostic tone played.";
@@ -2137,7 +2085,7 @@ export default function Home() {
       setShipOpsStatus(message);
       showToast({ message, variant: "warning" });
     }
-  }, [mediaAudioDiagnosticWavUri, showToast]);
+  }, [showToast]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -2288,6 +2236,30 @@ export default function Home() {
         contact_id: contactId,
         contact_type: scannerContact?.contact_type ?? chartContactType ?? "unknown",
       });
+      dispatchFlightAudioEvent("scanner.contact_selected", {
+        source,
+        contact_id: contactId,
+        contact_type: scannerContact?.contact_type ?? chartContactType ?? "unknown",
+      });
+
+      const contactType = scannerContact?.contact_type ?? chartContactType;
+      if (contactType === "star") {
+        dispatchFlightAudioEvent("scanner.contact_class_star", { source, contact_id: contactId });
+      } else if (contactType === "planet") {
+        dispatchFlightAudioEvent("scanner.contact_class_planet", { source, contact_id: contactId });
+      } else if (contactType === "station") {
+        dispatchFlightAudioEvent("scanner.contact_class_station", { source, contact_id: contactId });
+      } else if (contactType === "ship") {
+        dispatchFlightAudioEvent("scanner.contact_class_ship", { source, contact_id: contactId });
+      }
+
+      if (source === "system-chart" || source === "scanner-hud-blip" || source === "scanner-hud-list") {
+        dispatchFlightAudioEvent("flight.destination_selected", {
+          source,
+          contact_id: contactId,
+          contact_type: contactType ?? "unknown",
+        });
+      }
     }
 
     return true;
@@ -3186,6 +3158,10 @@ export default function Home() {
       const payload = data as ScannerContactsResponse;
       const contacts = Array.isArray(payload.contacts) ? payload.contacts : [];
       setScannerContacts(contacts);
+      dispatchFlightAudioEvent("scanner.ping", {
+        contacts_count: contacts.length,
+        system_id: payload.system_id,
+      });
       setScannerLiveContacts([]);
       setScannerSystemId(Number.isInteger(payload.system_id) ? payload.system_id : null);
       setScannerSystemName(payload.system_name || null);
@@ -3228,6 +3204,7 @@ export default function Home() {
       setScannerContactsLoading(false);
     }
   }, [
+    dispatchFlightAudioEvent,
     localChartData,
     recordSystemChartSelectionSync,
     shipId,
@@ -3256,6 +3233,7 @@ export default function Home() {
         const message = data?.error?.message || data?.detail || "Local chart unavailable.";
         setLocalChartData(null);
         setLocalChartError(message);
+        dispatchFlightAudioEvent("chart.sync_fail", { system_id: systemId, reason: message });
         emitSystemChartObservability("chart-sync", {
           systemId,
           success: false,
@@ -3270,6 +3248,10 @@ export default function Home() {
 
       const chartPayload = normalizeLocalChartPayload(data as LocalChartResponse);
       setLocalChartData(chartPayload);
+      dispatchFlightAudioEvent("chart.sync_success", {
+        system_id: systemId,
+        row_count: countLocalChartRows(chartPayload),
+      });
       emitSystemChartObservability("chart-sync", {
         systemId,
         success: true,
@@ -3279,6 +3261,7 @@ export default function Home() {
       const message = "Local chart unavailable.";
       setLocalChartData(null);
       setLocalChartError(message);
+      dispatchFlightAudioEvent("chart.sync_fail", { system_id: systemId, reason: message });
       emitSystemChartObservability("chart-sync", {
         systemId,
         success: false,
@@ -3291,7 +3274,7 @@ export default function Home() {
     } finally {
       setLocalChartLoading(false);
     }
-  }, [emitSystemChartObservability, showToast, token]);
+  }, [dispatchFlightAudioEvent, emitSystemChartObservability, showToast, token]);
 
   const fetchGalaxySystems = useCallback(async (options?: { silent?: boolean }) => {
     if (!token) {
@@ -3553,6 +3536,18 @@ export default function Home() {
       setFlightCollisionStatus(sanitizeCollisionStatusMessage(payload.message));
 
       if (payload.collision) {
+        dispatchFlightAudioEvent(
+          payload.severity === "critical" ? "collision.critical_hit" : "collision.glancing_hit",
+          {
+            object_id: payload.object_id ?? null,
+            object_type: payload.object_type ?? null,
+            distance_km: payload.distance_km ?? null,
+          },
+        );
+        dispatchFlightAudioEvent("ops.crash_recovery_start", {
+          recovered: Boolean(payload.recovered),
+          object_id: payload.object_id ?? null,
+        });
         const signature = `${payload.severity}:${payload.object_id ?? "unknown"}:${payload.recovered ? "r" : "n"}`;
         const severityLabel = payload.severity.toUpperCase();
         const objectLabel = payload.object_name ?? payload.object_type ?? "unknown object";
@@ -3597,6 +3592,7 @@ export default function Home() {
       setFlightRecentImpacts([]);
     }
   }, [
+    dispatchFlightAudioEvent,
     shipId,
     showToast,
     syncFlightStateFromShipTelemetry,
@@ -4598,6 +4594,9 @@ export default function Home() {
       || (previousActiveModeRef.current === "navigation" && previousNavigationViewRef.current === "system");
     if (isSystemModeActive && !wasSystemMode) {
       systemChartOpenCountRef.current += 1;
+      dispatchFlightAudioEvent("chart.open", {
+        open_count: systemChartOpenCountRef.current,
+      });
       emitSystemChartObservability("chart-open", {
         openCount: systemChartOpenCountRef.current,
       });
@@ -4605,7 +4604,13 @@ export default function Home() {
 
     previousActiveModeRef.current = activeMode;
     previousNavigationViewRef.current = navigationView;
-  }, [activeMode, emitSystemChartObservability, isSystemModeActive, navigationView]);
+  }, [
+    activeMode,
+    dispatchFlightAudioEvent,
+    emitSystemChartObservability,
+    isSystemModeActive,
+    navigationView,
+  ]);
 
   useEffect(() => {
     if (!isSystemModeActive) {
@@ -5161,6 +5166,11 @@ export default function Home() {
 
   useEffect(() => {
     const previousSpeed = previousFlightSpeedUnitsRef.current;
+    if (previousSpeed <= 0 && flightSpeedUnits > 0) {
+      dispatchFlightAudioEvent("flight.engine_loop_start", {
+        speed_units: flightSpeedUnits,
+      });
+    }
     if (flightSpeedUnits > 0) {
       dispatchFlightAudioEvent("flight.motion_loop", {
         speed_units: flightSpeedUnits,
@@ -5834,7 +5844,8 @@ export default function Home() {
       return;
     }
     setActiveMode(mode);
-  }, [dockedAtStation, showToast]);
+    dispatchFlightAudioEvent("flight.mode_confirm", { mode });
+  }, [dispatchFlightAudioEvent, dockedAtStation, showToast]);
 
   useEffect(() => {
     if (activeMode !== "flight") {
@@ -5998,20 +6009,31 @@ export default function Home() {
       if (!response.ok) {
         const message = data?.error?.message || "Unable to run market tick.";
         setMarketTickStatus(message);
+        dispatchFlightAudioEvent("admin.market_tick_fail", { reason: message });
         showToast({ message, variant: "error" });
         return;
       }
       setMarketTickStatus(`Tick applied (${data.affected_rows} rows).`);
+      dispatchFlightAudioEvent("admin.market_tick_success", { affected_rows: data.affected_rows });
       showToast({ message: "Market tick applied.", variant: "success" });
       void fetchMarketSummary();
       void fetchInventory({ silent: true });
     } catch {
       setMarketTickStatus("Unable to run market tick.");
+      dispatchFlightAudioEvent("admin.market_tick_fail", { reason: "request-failed" });
       showToast({ message: "Unable to run market tick.", variant: "error" });
     } finally {
       setMarketTickLoading(false);
     }
-  }, [fetchInventory, fetchMarketSummary, marketTickSteps, selectedSystemId, showToast, token]);
+  }, [
+    dispatchFlightAudioEvent,
+    fetchInventory,
+    fetchMarketSummary,
+    marketTickSteps,
+    selectedSystemId,
+    showToast,
+    token,
+  ]);
 
   const fetchAdminUsers = useCallback(async () => {
     if (!token || commanderProfile?.role !== "admin") {
@@ -6074,6 +6096,7 @@ export default function Home() {
       const data = await response.json();
       if (!response.ok) {
         const message = data?.error?.message || data?.detail || "Unable to update user.";
+        dispatchFlightAudioEvent("admin.user_update_fail", { user_id: user.id, reason: message });
         showToast({ message, variant: "error" });
         return;
       }
@@ -6092,13 +6115,22 @@ export default function Home() {
         delete next[user.id];
         return next;
       });
+      dispatchFlightAudioEvent("admin.user_update_success", { user_id: user.id });
       showToast({ message: `Updated user ${updatedUser.username}.`, variant: "success" });
     } catch {
+      dispatchFlightAudioEvent("admin.user_update_fail", { user_id: user.id, reason: "request-failed" });
       showToast({ message: "Unable to update user.", variant: "error" });
     } finally {
       setAdminUserSavingId(null);
     }
-  }, [adminUsersRoleEdits, adminUsersStatusEdits, commanderProfile?.role, showToast, token]);
+  }, [
+    adminUsersRoleEdits,
+    adminUsersStatusEdits,
+    commanderProfile?.role,
+    dispatchFlightAudioEvent,
+    showToast,
+    token,
+  ]);
 
   const fetchAdminLogs = useCallback(async (options?: { follow?: boolean }) => {
     if (!token || commanderProfile?.role !== "admin") {
@@ -6166,6 +6198,10 @@ export default function Home() {
       } else {
         setAdminLogs(entries);
       }
+      dispatchFlightAudioEvent("admin.logs_refresh", {
+        entries_count: entries.length,
+        follow: includeSinceCursor,
+      });
       setLogsSinceCursor(typeof payload.next_since === "string" ? payload.next_since : null);
     } catch {
       setAdminLogsError("Unable to load logs.");
@@ -6177,7 +6213,16 @@ export default function Home() {
         setAdminLogsLoading(false);
       }
     }
-  }, [commanderProfile?.role, logsContains, logsLevel, logsRegex, logsSinceCursor, logsTail, token]);
+  }, [
+    commanderProfile?.role,
+    dispatchFlightAudioEvent,
+    logsContains,
+    logsLevel,
+    logsRegex,
+    logsSinceCursor,
+    logsTail,
+    token,
+  ]);
 
   const handleShipOperation = useCallback(async (
     operation: "dock" | "undock" | "refuel" | "jump" | "repair" | "recharge",
@@ -6244,10 +6289,23 @@ export default function Home() {
       if (!response.ok) {
         const message = data?.error?.message || data?.detail || `Unable to ${operation} ship.`;
         setShipOpsStatus(message);
+        if (operation === "dock") {
+          dispatchFlightAudioEvent("ops.dock_reject", { reason: message });
+          dispatchFlightAudioEvent("ops.docking_request_reject", { reason: message });
+        }
         showToast({ message, variant: "error" });
         return false;
       }
       setShipOpsStatus(`Ship ${operation} operation successful.`);
+      if (operation === "dock") {
+        dispatchFlightAudioEvent("ops.dock_success");
+      } else if (operation === "undock") {
+        dispatchFlightAudioEvent("ops.undock_success");
+      } else if (operation === "refuel") {
+        dispatchFlightAudioEvent("ops.refuel_success");
+      } else if (operation === "jump") {
+        dispatchFlightAudioEvent("flight.jump_arrived");
+      }
       showToast({ message: `Ship ${operation} operation successful.`, variant: "success" });
       void fetchShipCargo({ silent: true });
       void fetchShipTelemetry({ silent: true });
@@ -6263,6 +6321,10 @@ export default function Home() {
     } catch {
       const message = `Unable to ${operation} ship.`;
       setShipOpsStatus(message);
+      if (operation === "dock") {
+        dispatchFlightAudioEvent("ops.dock_reject", { reason: message });
+        dispatchFlightAudioEvent("ops.docking_request_reject", { reason: message });
+      }
       showToast({ message, variant: "error" });
       return false;
     } finally {
@@ -6281,6 +6343,7 @@ export default function Home() {
     repairAmount,
     shieldRechargeAmount,
     shipId,
+    dispatchFlightAudioEvent,
     showToast,
     selectedJumpSystemId,
     syncJumpCooldownFromShipTelemetry,
@@ -6728,6 +6791,9 @@ export default function Home() {
       setFlightJumpPhase(FLIGHT_PHASE.IDLE);
       setFlightJumpProgress(0);
       setShipOpsStatus("Waypoint lock released.");
+      dispatchFlightAudioEvent("chart.waypoint_unlock", {
+        station_id: selectedId,
+      });
       void persistFlightState(FLIGHT_PHASE.IDLE, null);
       void updateLocalTargetIntent("clear", null);
       return;
@@ -6739,9 +6805,14 @@ export default function Home() {
     setFlightJumpPhase(FLIGHT_PHASE.DESTINATION_LOCKED);
     setFlightJumpProgress(0);
     setShipOpsStatus(`Waypoint locked to ${jumpTargetSystemLabel} · ${jumpTargetStationLabel}.`);
+    dispatchFlightAudioEvent("chart.waypoint_lock", {
+      station_id: selectedId,
+      contact_id: stationContactId,
+    });
     void persistFlightState(FLIGHT_PHASE.DESTINATION_LOCKED, selectedId, stationContactId);
     void updateLocalTargetIntent("lock", stationContactId);
   }, [
+    dispatchFlightAudioEvent,
     flightDestinationLockedId,
     isDockingApproachActive,
     jumpTargetStationId,
@@ -6809,6 +6880,11 @@ export default function Home() {
     }
 
     setFlightJumpPhase(FLIGHT_PHASE.CHARGING);
+    dispatchFlightAudioEvent("flight.jump_initiated", {
+      jump_mode: jumpMode,
+      station_id: stationJumpTargetId,
+      contact_id: localTransferTargetContactId,
+    });
     if (jumpMode === "hyperspace") {
       dispatchFlightAudioEvent("jump.hyperspace_charge_start", {
         station_id: stationJumpTargetId,
@@ -6870,6 +6946,10 @@ export default function Home() {
       void fetchCommanderProfile();
 
       setFlightJumpPhase(FLIGHT_PHASE.ARRIVED);
+      dispatchFlightAudioEvent("flight.jump_arrived", {
+        jump_mode: "system",
+        contact_id: localTransferTargetContactId,
+      });
       triggerFlightJumpCompletionEffects({
         contact_id: localTransferTargetContactId,
         contact_name: localTransferTargetName,
@@ -6907,6 +6987,10 @@ export default function Home() {
 
     if (success) {
       setFlightJumpPhase(FLIGHT_PHASE.ARRIVED);
+      dispatchFlightAudioEvent("flight.jump_arrived", {
+        jump_mode: "hyperspace",
+        station_id: stationJumpTargetId,
+      });
       triggerFlightJumpCompletionEffects({
         station_id: stationJumpTargetId,
         system_id: Number(selectedJumpSystemId),
@@ -7207,11 +7291,16 @@ export default function Home() {
       return;
     }
 
+    dispatchFlightAudioEvent("ops.docking_request_reject", {
+      station_id: stationId,
+      station_name: stationLabel,
+    });
     setFlightJumpPhase(FLIGHT_PHASE.ERROR);
     setFlightJumpProgress(0);
     void persistFlightState(FLIGHT_PHASE.ERROR, null);
   }, [
     activeDockTargetContact?.name,
+    dispatchFlightAudioEvent,
     flightDockingApproachTargetStationId,
     handleShipOperation,
     persistFlightState,
@@ -7263,6 +7352,10 @@ export default function Home() {
         setFlightDockingApproachTargetStationId(parsedDockStationId);
         setFlightDockingApproachTargetContactId(targetContactId);
         setShipOpsStatus("Docking target syncing with scanner feed...");
+        dispatchFlightAudioEvent("ops.docking_request_accept", {
+          station_id: parsedDockStationId,
+          source: "sync",
+        });
         void persistFlightState(FLIGHT_PHASE.DOCKING_APPROACH, parsedDockStationId);
         return;
       }
@@ -7273,9 +7366,14 @@ export default function Home() {
       setFlightDockingApproachTargetStationId(parsedDockStationId);
       setFlightDockingApproachTargetContactId(targetContactId);
       setShipOpsStatus(`Docking computer engaged. Approaching ${targetContact.name}...`);
+      dispatchFlightAudioEvent("ops.docking_request_accept", {
+        station_id: parsedDockStationId,
+        station_name: targetContact.name,
+      });
       void persistFlightState(FLIGHT_PHASE.DOCKING_APPROACH, parsedDockStationId);
     },
     [
+      dispatchFlightAudioEvent,
       dockStationId,
       isDockingApproachActive,
       persistFlightState,
@@ -7309,8 +7407,13 @@ export default function Home() {
       return;
     }
 
+    dispatchFlightAudioEvent("ops.undock_launch", {
+      station_id: shipTelemetry?.docked_station_id ?? null,
+      station_name: stationLabel,
+    });
     runUndockOutboundTransitCinematic(stationLabel, stationContactId);
   }, [
+    dispatchFlightAudioEvent,
     flightJumpPhase,
     formatStationLabel,
     handleShipOperation,
@@ -7426,6 +7529,10 @@ export default function Home() {
         setFlightJumpPhase(FLIGHT_PHASE.IDLE);
         setFlightJumpProgress(0);
         setShipOpsStatus("Waypoint lock released.");
+        dispatchFlightAudioEvent("chart.waypoint_unlock", {
+          station_id: selectedStationId,
+          contact_id: selectedContact.id,
+        });
         void persistFlightState(FLIGHT_PHASE.IDLE, null);
         void updateLocalTargetIntent("clear", null);
         return;
@@ -7445,6 +7552,10 @@ export default function Home() {
         station_id: selectedStationId,
         station_name: selectedSystemChartStationLabel,
       });
+      dispatchFlightAudioEvent("chart.waypoint_lock", {
+        station_id: selectedStationId,
+        contact_id: selectedContact.id,
+      });
       void persistFlightState(FLIGHT_PHASE.DESTINATION_LOCKED, selectedStationId, selectedContact.id);
       void updateLocalTargetIntent("lock", selectedContact.id);
       return;
@@ -7456,6 +7567,9 @@ export default function Home() {
       setFlightJumpPhase(FLIGHT_PHASE.IDLE);
       setFlightJumpProgress(0);
       setShipOpsStatus("Local waypoint lock released.");
+      dispatchFlightAudioEvent("chart.waypoint_unlock", {
+        contact_id: selectedContact.id,
+      });
       void persistFlightState(FLIGHT_PHASE.IDLE, null);
       void updateLocalTargetIntent("clear", null);
       return;
@@ -7470,6 +7584,9 @@ export default function Home() {
     dispatchFlightAudioEvent("nav.target_locked", {
       contact_id: selectedContact.id,
       contact_name: selectedContact.name,
+    });
+    dispatchFlightAudioEvent("chart.waypoint_lock", {
+      contact_id: selectedContact.id,
     });
     void persistFlightState(FLIGHT_PHASE.DESTINATION_LOCKED, null, selectedContact.id);
     void updateLocalTargetIntent("lock", selectedContact.id);
@@ -8091,6 +8208,9 @@ export default function Home() {
       }
 
       if (payload.recovered) {
+        dispatchFlightAudioEvent("ops.crash_recovery_complete", {
+          object_id: payload.object_id ?? null,
+        });
         setFlightSceneResetKey((current) => current + 1);
         await fetchScannerContacts({ silent: true });
       }
@@ -8104,6 +8224,7 @@ export default function Home() {
     flightCollisionStatus,
     isFlightTransitActive,
     isDockingApproachActive,
+    dispatchFlightAudioEvent,
     shipId,
     showToast,
     syncFlightStateFromShipTelemetry,
@@ -8885,13 +9006,16 @@ export default function Home() {
     if (!dockedAtStation) {
       return;
     }
+    dispatchFlightAudioEvent("flight.docked_bay_ambience_start", {
+      station_id: shipTelemetry?.docked_station_id ?? null,
+    });
     setFlightSpeedUnits(0);
     setFlightRollDegrees(0);
     setScannerLiveContacts([]);
     setFlightCollisionStatus("Collision monitor idle.");
     setFlightRecentImpacts([]);
     collisionToastSignatureRef.current = "";
-  }, [dockedAtStation]);
+  }, [dispatchFlightAudioEvent, dockedAtStation, shipTelemetry?.docked_station_id]);
 
   useEffect(() => {
     if (!isDockingApproachActive && !isFlightTransitActive) {
@@ -9044,6 +9168,19 @@ export default function Home() {
       return;
     }
 
+    dispatchFlightAudioEvent("collision.warning_alarm", {
+      contact_id: impactCandidate.id,
+      contact_type: impactCandidate.type,
+      distance_km: impactCandidate.distance,
+      severity,
+    });
+    if (impactCandidate.type === "ship") {
+      dispatchFlightAudioEvent("flight.traffic_flyby", {
+        contact_id: impactCandidate.id,
+        distance_km: impactCandidate.distance,
+      });
+    }
+
     void handleFlightSceneCollision({
       contactId: impactCandidate.id,
       contactType: impactCandidate.type,
@@ -9054,6 +9191,7 @@ export default function Home() {
     });
   }, [
     activeMode,
+    dispatchFlightAudioEvent,
     flightCollisionStatus,
     flightSpeedUnits,
     handleFlightSceneCollision,
@@ -9109,6 +9247,19 @@ export default function Home() {
             ? "Message delivered."
             : "Message transmitted instantly."
       );
+      dispatchFlightAudioEvent("comms.local_send", {
+        channel_id: selectedCommsChannel.id,
+        delivery: outbound.delivery,
+      });
+      if (outbound.delivery === "queued") {
+        dispatchFlightAudioEvent("comms.relay_queued", {
+          channel_id: selectedCommsChannel.id,
+        });
+      } else if (outbound.delivery === "delivered") {
+        dispatchFlightAudioEvent("comms.relay_delivered", {
+          channel_id: selectedCommsChannel.id,
+        });
+      }
     } catch {
       const message = "Unable to send message.";
       setCommsStatus(message);
@@ -9219,6 +9370,12 @@ export default function Home() {
       await fetchCommanderProfile();
       setCompletedTrades((previous) => previous + 1);
       setTradeStatus(`Trade cleared. Remaining: ${data.remaining}`);
+      dispatchFlightAudioEvent("trade.loop_step_complete", {
+        station_id: Number(effectiveStationId),
+        commodity_id: selectedCommodity,
+        direction,
+        quantity: qty,
+      });
       showToast({ message: "Trade cleared successfully.", variant: "success" });
     } catch {
       setTradeStatus("Trade uplink failed.");
@@ -10892,6 +11049,10 @@ export default function Home() {
                                   data-testid={`local-chart-layer-${layer.key}`}
                                   className={layerEnabled ? styles.systemLayerButtonActive : styles.systemLayerButton}
                                   onClick={() => {
+                                    dispatchFlightAudioEvent(
+                                      layerEnabled ? "chart.layer_toggle_off" : "chart.layer_toggle_on",
+                                      { layer: layer.key },
+                                    );
                                     setLocalChartLayers((current) => ({
                                       ...current,
                                       [layer.key]: !current[layer.key],
