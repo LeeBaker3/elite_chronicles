@@ -25056,3 +25056,42 @@ Please reply with:
 > **Proceed with Expansion Pass 1 – Section 6**
 
 We are now doing the work that *actually* produces a 40–60 page document.
+
+---
+
+## Batch Plan Renumbering Note (2026-02-19)
+
+- Renamed planning file:
+  - `batch-10-galactic-chart-navigation-plan.md` → `batch-11-galactic-chart-navigation-plan.md`
+- Updated internal heading in renamed file:
+  - `Batch 10` → `Batch 11`
+- Updated reference in `prd.md` to the new Batch 11 filename.
+
+Reason: maintain sequential roadmap numbering after inserting newer batch planning documents.
+
+## Batch 10 Prerequisite + Audio Framework Note (2026-02-19)
+
+- Reviewed `prd.md` and roadmap chat context for missing “logically first”
+  requirements for Batch 10.
+- Added explicit dependency gate:
+  - Batch 10 should proceed after Batch 08 collision/docking safety
+    baseline and Batch 09 chart/scanner target workflow stabilization.
+- Added reusable SFX framework scaffolding in Batch 10:
+  - typed flight/jump audio event taxonomy,
+  - shared audio dispatcher requirement,
+  - cooldown/concurrency/mix policy,
+  - accessibility and silent-fallback behavior,
+  - additive contract hooks for deterministic audio timing metadata.
+
+## Batch 11 Readiness + Batch 12 Audio Scope Note (2026-02-19)
+
+- Added Batch 11 readiness gate note requiring Batch 10 checklist
+  completion (or explicit blocker waiver) before implementation start.
+- Added new planning document:
+  - `batch-12-audio-sfx-coverage-settings-plan.md`
+- Batch 12 scope includes:
+  - review-derived SFX coverage targets across Batch 01–09 features,
+  - unified audio event dispatcher model,
+  - settings-menu audio configurability (master/sfx toggles and category
+    volume controls),
+  - accessibility and fallback behavior requirements.

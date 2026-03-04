@@ -1,0 +1,241 @@
+
+# Project Overview
+This project is a **full-stack web application** with:  
+- **Backend:** Python (FastAPI)  
+- **Frontend:** Next.js (App Router) + TypeScript + CSS Modules
+- **Database:** PostgreSQL via SQLAlchemy + Alembic migrations
+- **Purpose:** Prototype command console for Elite Chronicles covering auth,
+  station market trading, ship cargo state, and story session flow
+
+Copilot should **maintain consistency between frontend and backend code** and follow the conventions below.  
+
+# Python Coding Conventions
+
+## Python Instructions
+
+- Write clear and concise comments for each function.
+- Ensure functions have descriptive names and include type hints.
+- Provide docstrings following PEP 257 conventions.
+- Use the `typing` module for type annotations (e.g., `List[str]`, `Dict[str, int]`).
+- Break down complex functions into smaller, more manageable functions.
+
+## Frontend Instructions
+- Use TypeScript for all new frontend logic and keep UI state strongly typed.
+- Keep feature logic in small functions; avoid very large inline handlers.
+- Prefer existing UI primitives/patterns over one-off implementations.
+- Preserve current visual system (tokens in `globals.css` + module styles).
+- Maintain explicit UI data states: loading, empty, error, success.
+- Keep API contract parity with backend response fields/status codes.
+- For fetch calls:
+	- Handle non-2xx responses with user-safe messages.
+	- Avoid silent failures; always set a visible status/error state.
+	- Keep request payloads aligned with backend schemas.
+- Accessibility baseline:
+	- Ensure interactive controls are keyboard reachable.
+	- Provide labels/roles where appropriate for forms and dialogs.
+	- Do not rely on color only to communicate state.
+- Frontend quality checks:
+	- Run `npm run lint` after frontend changes.
+	- Add tests when frontend test framework is introduced.
+
+## HTML Instructions
+- Use semantic HTML5 (<main>, <section>, <nav>, <header>, <footer> etc).
+- Use kebab-case for IDs and class names.
+- Include accessibility features (ARIA roles, alt text).
+
+## General Instructions
+
+- Always prioritize readability and clarity.
+- For algorithm-related code, include explanations of the approach used.
+- Write code with good maintainability practices, including comments on why certain design decisions were made.
+- Handle edge cases and write clear exception handling.
+- For libraries or external dependencies, mention their usage and purpose in comments.
+- Use consistent naming conventions and follow language-specific best practices.
+- Write concise, efficient, and idiomatic code that is also easily understandable.
+- Maintain contract parity (types, field names, status codes) across backend and frontend.
+- Provide safe defaults and guard rails (input validation, error handling, timeouts).
+- Surface TODOs as code comments with clear next actions.
+- Co‑generate:
+	•	Endpoint code + model/schema + validation
+	•	Matching frontend API wrapper + UI wiring
+	•	Tests and doc snippets (README/CONFIG/CHANGELOG stubs)
+
+## Code Style and Formatting
+
+- Follow the **PEP 8** style guide for Python use type hints.
+- Maintain proper indentation (use 4 spaces for each level of indentation).
+- Ensure lines do not exceed 79 characters.
+- Place function and class docstrings immediately after the `def` or `class` keyword.
+- Use blank lines to separate functions, classes, and code blocks where appropriate.
+- API endpoints must return JSON with proper HTTP status codes.  
+- Error format should be consistent:  
+
+## Edge Cases and Testing
+
+- Always include test cases for critical paths of the application.
+- Account for common edge cases like empty inputs, invalid data types, and large datasets.
+- Include comments for edge cases and the expected behavior in those cases.
+- Write unit tests for functions and document them with docstrings explaining the test cases.
+- Backend: pytest for unit tests. (structure: backend/test).
+- Frontend: eslint via `npm run lint`; add component/unit tests as test setup matures.
+- Linters/formatters: ruff/flake8 + black (Python)
+
+## GitHub TODO Board Maintenance
+
+Use GitHub issues + the in-repo plan docs to track planning and execution:
+
+- Planning docs:
+	- `prd/ui-foundations-checklist.md`
+	- `prd/ui-foundations-implementation-plan.md`
+- Current phased tracking issues:
+	- #1 Tooltip primitive + first adopters
+	- #2 Global toast system
+	- #3 Loading/empty/error standardization
+	- #4 Audit + cleanup
+
+Maintenance rules:
+- Keep one issue per phase/workstream; avoid duplicate tracking issues.
+- Update issue checklists whenever scope or acceptance criteria changes.
+- Link PRs to the relevant phase issue and reference completed checklist items.
+- When work is done, update both:
+	- GitHub issue status/checklist
+	- `prd/ui-foundations-implementation-plan.md` phase checkbox
+- If scope grows, create follow-up issues and cross-link them explicitly.
+- During planning sessions, review board priority/order before implementation.
+
+## Batch Planning Standards (Required)
+
+When creating or updating any batch planning document in `prd/`:
+
+- Always start from `prd/batch-template.md`.
+- Name new batch docs using the established pattern:
+	- `prd/batch-XX-<topic>-plan.md`
+- Include a **PRD Alignment** section that maps each major batch workstream to exact sections in `prd/prd.md`.
+	- Use explicit section references (for example `5.3`, `5.3.2`, `5.14`).
+	- Do not use vague references like "scanner requirements" without section numbers.
+- Keep scope aligned to `prd/prd.md` goals, functional requirements, and user stories.
+	- If proposing scope beyond the current PRD, include a **PRD Update Needed** note with exact text/section deltas.
+- Every batch plan must include at minimum:
+	- Objective
+	- Why This Batch Next
+	- PRD Alignment
+	- Execution Status Update
+	- Readiness Checklist
+	- In Scope / Out of Scope
+	- Data and Contract Additions
+	- Implementation Sequence
+	- Acceptance Criteria
+	- Risks and Mitigations
+	- Test and Validation Evidence
+	- Documentation Update Checklist
+- Acceptance criteria in each batch must be testable and traceable back to mapped PRD sections.
+- Keep plans additive and maintain backward compatibility unless a breaking change is explicitly approved and documented.
+
+## Example of Proper Documentation
+
+```python
+def calculate_area(radius: float) -> float:
+    """
+    Calculate the area of a circle given the radius.
+    
+    Parameters:
+    radius (float): The radius of the circle.
+    
+    Returns:
+    float: The area of the circle, calculated as π * radius^2.
+    """
+    import math
+    return math.pi * radius ** 2
+```
+
+# Project Maintenance & Git Workflow
+
+## Before committing changes:
+
+1. Update Documentation Files
+- README.md: Ensure usage, setup, and instructions are up to date.
+	•	Setup, run, and deployment instructions current
+	•	API overview and key endpoints updated
+	•	Screenshots/GIFs reflect current UI (if present)
+- CONFIG.md: Reflect any new or changed configuration options.
+	•	All new/changed environment variables documented
+	•	Default values and secure examples (no secrets)
+	•	Migration/upgrade notes for config changes
+- CHANGELOG.md: Add an entry summarizing changes.
+	•	Add an entry for every user‑visible or developer‑facing change
+	•	Follow the format below
+- PRODUCT_REQUIREMENTS_DOCUMENT.md: Update with new features or changes.
+	•	Reflect any new or changed user requirements
+	•	Ensure all features are described with acceptance criteria
+	•	Ensure any API changes are reflected in the API contracts section
+- COMPATIBILITY.md: Update with any changes to compatibility or breaking changes.
+	•	Document any breaking changes or deprecations
+	•	Ensure compatibility notes are clear and concise
+
+Changelog Format
+
+Follow the existing Keep a Changelog style:
+- ## Version heading: [X.Y.Z] - YYYY-MM-DD
+
+Sections:
+- ### Added – new features.
+- ### Changed – modifications to existing functionality.
+- ### Fixed – bug fixes.
+- ### (Optional) Removed – deprecated/removed features.
+
+Example:
+## [0.4.2] - 2025-08-20
+### Added
+- New API endpoint for story search with pagination.
+
+### Changed
+- Updated frontend to use async/await consistently for fetch calls.
+
+### Fixed
+- Prevent crash when uploading malformed image files.
+
+2. Review GitHub Workflow Files (.github/workflows/)
+- Ensure CI/CD reflects new dependencies, tests, or build steps.
+- Update triggers if new branches or environments are introduced.
+- Validate YAML syntax before pushing.
+
+3. Run Tests & Linting
+- Run all unit tests (pytest, Jest).
+- Lint Python (flake8, black) and Frontend (TBC). Run and fix issues as needed
+
+
+4. Commit Format
+Use Conventional Commits:
+- feat: for new features
+- fix: for bug fixes
+- docs: for documentation changes
+- chore: for maintenance tasks
+- refactor: code change that neither fixes a bug nor adds a feature
+- test: adding or correcting tests
+- build: build system or external dependencies
+- ci: CI/CD changes
+
+
+Example:
+feat(api): add search endpoint with pagination
+fix(ui): prevent crash on malformed image upload
+ci(workflows): add Python 3.12 to test matrix
+docs: update README with docker-compose usage
+
+# Checklists
+
+## Pre‑Commit Checklist
+- README updated
+- CONFIG updated
+- CHANGELOG updated with today’s date
+- PRODUCT REQUIREMENTS DOCUMENT updated
+- Workflows reviewed/updated as needed
+- Tests pass locally
+- Linters/formatters clean
+	•	Conventional Commit message prepared
+
+## PR Checklist
+- Screenshots or API examples included (if UI/API change)
+- Backwards compatibility or migration notes
+- Security considerations documented (secrets, permissions)
+- CI green across all jobs

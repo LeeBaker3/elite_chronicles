@@ -82,6 +82,14 @@ Elite Chronicles is a browser-based, multiplayer space trading and exploration g
 - Exit-point drift is applied on arrival; upgraded hyperspace computers reduce drift.
 - Misjumps trigger a recovery state (repair, tow, or emergency jump).
 
+5.3.2 Tactical Scanner Range and Scale
+- Flight scanner grid is a local tactical display and must not render deep-system contacts as near.
+- Default scanner grid render cap is 100 km from player ship.
+- Player can change scanner range using presets: 25 km, 50 km, 100 km, 250 km, 500 km.
+- Contacts beyond the active scanner range are excluded from on-grid blip rendering.
+- Out-of-range contacts remain available in scanner contact list with true distance labels.
+- Scanner UI displays the active range preset and preserves it in player preferences.
+
 5.4 Space Combat
 - Server-authoritative combat simulation with tick updates.
 - Damage resolution: shields absorb before hull.
@@ -257,6 +265,10 @@ Admin and Observability
 - combat_sessions: id, system_id, status, created_at, ended_at
 - combat_participants: id, combat_session_id, ship_id, user_id, side, status
 - combat_logs: id, combat_session_id, attacker_ship_id, target_ship_id, weapon_id, damage, shield_damage, hull_damage, timestamp
+
+15. UI Foundations (Post-Prototype)
+- A shared UI foundations checklist governs cross-application primitives for tooltips, toasts, and empty states.
+- See [ui-foundations-checklist.md](ui-foundations-checklist.md) for rollout phases and acceptance criteria.
 
 6.8 Communication
 - communication_nodes: id, system_id, station_id, relay_range, latency_per_hop, processing_delay
@@ -718,6 +730,64 @@ Phase 4: AI Story Integration
 
 Phase 5: Expanded Universe
 - More stations, factions, missions, and tuning.
+
+15.1 Next Execution Batch
+- See [batch-01-core-systems-plan.md](batch-01-core-systems-plan.md) for scoped implementation sequencing and acceptance criteria.
+
+15.2 Following Execution Batch
+- See [batch-02-economy-logs-plan.md](batch-02-economy-logs-plan.md) for scope covering economy tick baseline and logs API baseline.
+
+15.3 Current Visual/Flight Batch
+- See [batch-07-docking-undocking-ship-station-visuals-plan.md](batch-07-docking-undocking-ship-station-visuals-plan.md) for docked flight bay visuals, Cobra Mk I baseline, and classic station styling scope.
+
+15.4 Collision + Docking Safety Batch
+- See [batch-08-collision-docking-safety-plan.md](batch-08-collision-docking-safety-plan.md) for collision detection, crash recovery to safe checkpoints, docking approach sequencing, and docking computer range rules.
+
+15.5 Local Navigation Chart Batch
+- See [batch-09-local-navigation-chart-plan.md](batch-09-local-navigation-chart-plan.md) for local chart functionality and scanner-tandem navigation workflow.
+- Batch 09 additionally defines scanner tactical range-cap behavior and player-adjustable scanner range scaling.
+
+15.6 In-System Travel Completion Batch
+- See [batch-10-in-system-travel-celestial-realism-plan.md](batch-10-in-system-travel-celestial-realism-plan.md) for deterministic celestial rendering, station/planet spatial consistency, interactive 3D system chart tooling, and local target travel workflow.
+- Dependency gate: execute after Batch 08 safety baseline and Batch 09 chart/scanner target workflow are stable.
+- Readiness gate: confirm Batch 10 checklist completion before starting implementation workstreams.
+
+15.7 Galactic Chart + Hyperspace Batch
+- See [batch-11-galactic-chart-navigation-plan.md](batch-11-galactic-chart-navigation-plan.md) for galactic chart navigation, hyperspace planning/execution support, and star-data strategy.
+
+15.8 Audio SFX Coverage + Settings Batch
+- See [batch-12-audio-sfx-coverage-settings-plan.md](batch-12-audio-sfx-coverage-settings-plan.md) for cross-batch (01-09) audio special-effects coverage and configurable audio controls in settings.
+- Batch 12 item: use [batch-12-audio-event-key-table.md](batch-12-audio-event-key-table.md) as the canonical event-key mapping for implementation.
+
+15.9 Collision Outcomes + Escape Capsule + Rescue Batch
+- See [batch-13-collision-outcomes-damage-sfx-plan.md](batch-13-collision-outcomes-damage-sfx-plan.md) for collision outcome depth, impact feedback, and escape capsule/rescue branches.
+
+15.10 Real-Time Multiplayer and In-System Communications Batch
+- See [batch-14-realtime-multiplayer-comms-plan.md](batch-14-realtime-multiplayer-comms-plan.md) for WebSocket channel behavior, ship/player in-system communications, and delayed relay delivery beyond local scope.
+
+15.11 NPC Population Foundation Batch
+- See [batch-15-npc-population-framework-plan.md](batch-15-npc-population-framework-plan.md) for in-space and station NPC visibility and baseline behaviors.
+
+15.12 Archetype Expansion + Cargo Convoys Batch
+- See [batch-16-ship-station-convoy-expansion-plan.md](batch-16-ship-station-convoy-expansion-plan.md) for expanded ship/station types and cargo convoy economy actors.
+
+15.13 System Politics + Economy Coupling Batch
+- See [batch-17-system-politics-economy-coupling-plan.md](batch-17-system-politics-economy-coupling-plan.md) for political state progression and economy impact integration.
+
+15.14 Station Narrative + Missions Batch
+- See [batch-18-station-narrative-missions-plan.md](batch-18-station-narrative-missions-plan.md) for in-station text/chat-driven gameplay expansion and mission lifecycle integration.
+
+15.15 Combat Recovery Finalization Batch
+- See [batch-19-combat-rescue-escape-capsule-plan.md](batch-19-combat-rescue-escape-capsule-plan.md) for combat completion and survival/recovery outcomes.
+
+15.16 Admin, Moderation, and Operations Completion Batch
+- See [batch-20-admin-moderation-ops-completion-plan.md](batch-20-admin-moderation-ops-completion-plan.md) for full admin governance, moderation workflow, and live operations controls.
+
+15.17 Security, Reliability, Analytics, and Release Readiness Batch
+- See [batch-21-security-reliability-release-readiness-plan.md](batch-21-security-reliability-release-readiness-plan.md) for final hardening and launch readiness validation.
+
+15.18 PRD-to-Batch Alignment Matrix
+- See [batch-roadmap-requirement-alignment.md](batch-roadmap-requirement-alignment.md) for requirement coverage mapping and gap verification.
 
 16. Acceptance Criteria (High Level)
 - Players can register, login, and persist their ship state.

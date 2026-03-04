@@ -1,0 +1,57 @@
+.state {
+    display: grid;
+    gap: 10px;
+    padding: 14px;
+    border-radius: 14px;
+    border: 1px solid var(--edge);
+    background: rgba(8, 16, 30, 0.72);
+}
+
+.headerRow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.icon {
+    width: 18px;
+    text-align: center;
+    color: var(--muted);
+    line-height: 1;
+}
+
+.title {
+    font-size: 0.92rem;
+    color: var(--ink);
+}
+
+.description {
+    color: var(--muted);
+    font-size: 0.86rem;
+}
+
+.action {
+    width: fit-content;
+    border: 1px solid var(--edge);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--ink);
+    padding: 8px 14px;
+    cursor: pointer;
+}
+
+.loading .icon {
+    color: var(--accent);
+}
+
+.error {
+    border-color: rgba(255, 107, 107, 0.4);
+}
+
+.error .icon {
+    color: #ff7f7f;
+}
+
+.empty .icon {
+    color: var(--muted);
+}

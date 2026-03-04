@@ -1,0 +1,7 @@
+from pydantic import BaseModel
+
+
+class StationSummary(BaseModel):
+    id: int
+    name: str
+    system_id: int
