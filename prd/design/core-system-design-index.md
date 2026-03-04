@@ -19,6 +19,7 @@ Baseline note:
 | Stations and Locations | `core-stations-locations-design.md` | 5.7, 6.2 | 07, 16 |
 | Story and AI Interaction | `core-story-ai-design.md` | 5.8, 6.6, 8 | 18 |
 | Communications and Messaging | `core-comms-design.md` | 5.9, 7.6 | 03, 14 |
+| Audio SFX and Settings | `core-audio-sfx-design.md` | 15.8, 10, 12, 16 | 12 |
 | Missions, Factions, Reputation | `core-missions-factions-reputation-design.md` | 5.10, 6.5, 7.4 | 04, 17, 18 |
 | Admin, Moderation, Observability | `core-admin-ops-design.md` | 5.11, 5.12, 7.7, 11, 13 | 20, 21 |
 | Politics-Economy Coupling | `integration-politics-economy-design.md` | 5.6, 5.10, 9, 15.13 | 17 |
