@@ -29,20 +29,34 @@ def list_stations(db: Session = Depends(get_db)):
 @router.get("/{station_id}/inventory", response_model=list[InventoryItem])
 def get_inventory(station_id: int, db: Session = Depends(get_db)):
     items = (
-        db.query(StationInventory, Commodity)
-        .join(Commodity, StationInventory.commodity_id == Commodity.id)
-        .filter(StationInventory.station_id == station_id)
+        db.query(Commodity, StationInventory)
+        .outerjoin(
+            StationInventory,
+            (
+                (StationInventory.commodity_id == Commodity.id)
+                & (StationInventory.station_id == station_id)
+            ),
+        )
+        .order_by(Commodity.id.asc())
         .all()
     )
     return [
         InventoryItem(
             name=commodity.name,
-            commodity_id=item.commodity_id,
-            quantity=item.quantity,
-            buy_price=item.buy_price,
-            sell_price=item.sell_price,
+            commodity_id=commodity.id,
+            quantity=int(item.quantity) if item is not None else 0,
+            buy_price=(
+                int(item.buy_price)
+                if item is not None
+                else int(commodity.base_price)
+            ),
+            sell_price=(
+                int(item.sell_price)
+                if item is not None
+                else int(commodity.base_price)
+            ),
         )
-        for item, commodity in items
+        for commodity, item in items
     ]
 
 
@@ -53,6 +67,14 @@ def trade(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    commodity = (
+        db.query(Commodity)
+        .filter(Commodity.id == payload.commodity_id)
+        .first()
+    )
+    if commodity is None:
+        raise HTTPException(status_code=404, detail="Commodity not found")
+
     item = (
         db.query(StationInventory)
         .filter(
@@ -61,8 +83,18 @@ def trade(
         )
         .first()
     )
-    if not item:
-        raise HTTPException(status_code=404, detail="Commodity not found")
+    if item is None:
+        item = StationInventory(
+            station_id=station_id,
+            commodity_id=payload.commodity_id,
+            quantity=0,
+            max_capacity=0,
+            buy_price=int(commodity.base_price),
+            sell_price=int(commodity.base_price),
+            version=0,
+        )
+        db.add(item)
+        db.flush()
     if payload.qty <= 0:
         raise HTTPException(
             status_code=422, detail="Quantity must be positive")

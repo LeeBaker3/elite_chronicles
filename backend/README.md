@@ -45,6 +45,59 @@ uvicorn app.main:app --reload
 
 ## Maintenance scripts
 
+Developer ship tools (quick status + top-up):
+
+```bash
+cd backend
+../.venv/bin/python scripts/dev_ship_tools.py status --ship-id 1
+../.venv/bin/python scripts/dev_ship_tools.py top-up --ship-id 1
+```
+
+End-to-end jump-modes smoke (single integrated flow for local transfer and
+hyperspace behavior):
+
+```bash
+cd backend
+../.venv/bin/python scripts/smoke_jump_modes.py
+```
+
+Bootstrap known-star inspired galactic systems (deterministic + idempotent):
+
+```bash
+cd backend
+../.venv/bin/python scripts/bootstrap_known_star_systems.py
+```
+
+Optional flags:
+
+- `--dry-run`: print changes without writing data.
+- `--skip-regenerate`: only upsert systems/stations and skip celestial regeneration.
+- `--disable-online-names`: skip online Milky Way name ingestion and use procedural fallback names only.
+- `--dataset-url <url>`: override star-name dataset source URL.
+- `--dataset-timeout-seconds <int>`: set HTTP timeout for dataset download (default `20`).
+- `--max-real-names <int>`: cap ingested unique real-star names (default `3000`).
+
+Default dataset source:
+
+- `https://raw.githubusercontent.com/astronexus/HYG-Database/main/hyg/CURRENT/hygdata_v41.csv`
+
+If online ingestion is unavailable, the script safely falls back to deterministic procedural naming.
+
+Batch-11 deterministic regeneration/backfill sequence:
+
+```bash
+cd backend
+../.venv/bin/python scripts/bootstrap_known_star_systems.py
+../.venv/bin/python scripts/generate_galaxy_system_details.py
+../.venv/bin/python scripts/backfill_station_orbits.py
+```
+
+This sequence supports:
+
+- initial generation for systems/stations,
+- idempotent regeneration for celestial body details,
+- station host-orbit backfill operations.
+
 Backfill legacy celestial body orbit scales to realistic million-km ranges:
 
 ```bash

@@ -335,6 +335,31 @@ def test_trade_buy_fails_when_cargo_full(client, db_session):
     assert response.json()["error"]["message"] == "Cargo hold is full"
 
 
+def test_inventory_lists_zero_stock_for_missing_station_rows(client, db_session):
+    station_id, commodity_id = seed_inventory(db_session, quantity=10)
+
+    extra_commodity = Commodity(
+        name="Test Grain",
+        category="agricultural",
+        base_price=80,
+        volatility=0,
+        illegal_flag=False,
+    )
+    db_session.add(extra_commodity)
+    db_session.commit()
+
+    response = client.get(f"/api/stations/{station_id}/inventory")
+    assert response.status_code == 200
+    payload = response.json()
+
+    by_id = {item["commodity_id"]: item for item in payload}
+    assert commodity_id in by_id
+    assert extra_commodity.id in by_id
+    assert by_id[extra_commodity.id]["quantity"] == 0
+    assert by_id[extra_commodity.id]["buy_price"] == extra_commodity.base_price
+    assert by_id[extra_commodity.id]["sell_price"] == extra_commodity.base_price
+
+
 def test_trade_sell_fails_when_insufficient_cargo(client, db_session):
     headers, user_id = auth_headers_for(
         client, "trader-5@example.com", "trader-5")
@@ -358,6 +383,59 @@ def test_trade_sell_fails_when_insufficient_cargo(client, db_session):
 
     assert response.status_code == 409
     assert response.json()["error"]["message"] == "Insufficient cargo"
+
+
+def test_trade_sell_creates_missing_station_inventory_row(client, db_session):
+    headers, user_id = auth_headers_for(
+        client, "trader-6b@example.com", "trader-6b")
+    station_id, _commodity_id, ship_id = seed_inventory_with_ship(
+        db_session,
+        quantity=10,
+        cargo_capacity=10,
+        owner_user_id=user_id,
+    )
+
+    extra_commodity = Commodity(
+        name="Test Luxury",
+        category="luxury",
+        base_price=250,
+        volatility=0,
+        illegal_flag=False,
+    )
+    db_session.add(extra_commodity)
+    db_session.flush()
+
+    cargo_row = ShipCargo(
+        ship_id=ship_id,
+        commodity_id=extra_commodity.id,
+        quantity=3,
+    )
+    db_session.add(cargo_row)
+    db_session.commit()
+
+    response = client.post(
+        f"/api/stations/{station_id}/trade",
+        json={
+            "ship_id": ship_id,
+            "commodity_id": extra_commodity.id,
+            "qty": 2,
+            "direction": "sell",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+
+    station_row = (
+        db_session.query(StationInventory)
+        .filter(
+            StationInventory.station_id == station_id,
+            StationInventory.commodity_id == extra_commodity.id,
+        )
+        .first()
+    )
+    assert station_row is not None
+    assert station_row.quantity == 2
 
 
 def test_trade_buy_then_sell_updates_cargo_and_credits(client, db_session):

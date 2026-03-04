@@ -1352,6 +1352,151 @@
   z-index: 8;
 }
 
+.flightJumpCompletionVfx {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 9;
+}
+
+.flightJumpCompletionVfxFlash {
+  animation: flight-jump-completion-flash 300ms ease-out;
+}
+
+.flightJumpCompletionVfxStabilize {
+  animation: flight-jump-completion-stabilize 1200ms ease-out;
+}
+
+.flightJumpCompletionVfxReduced {
+  opacity: 0.66;
+  border: 1px solid rgba(125, 249, 255, 0.44);
+  box-shadow: inset 0 0 0 1px rgba(125, 249, 255, 0.36);
+}
+
+.flightHyperspaceOverlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 7;
+}
+
+.flightHyperspaceOverlayActive {
+  animation: flight-hyperspace-stretch 2400ms cubic-bezier(0.22, 0.01, 0.14, 1) 1 forwards;
+}
+
+.flightHyperspaceOverlayExitFlash {
+  animation: flight-hyperspace-exit-flash 320ms ease-out;
+}
+
+@keyframes flight-hyperspace-stretch {
+  0% {
+    opacity: 0.14;
+    background:
+      radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0) 24%),
+      repeating-conic-gradient(
+        from 0deg at 50% 50%,
+        rgba(138, 235, 255, 0.22) 0deg 2.2deg,
+        rgba(138, 235, 255, 0) 2.2deg 12deg
+      );
+    transform: scale(0.5);
+    filter: blur(0.2px);
+  }
+
+  28% {
+    opacity: 0.46;
+    background:
+      radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0) 27%),
+      repeating-conic-gradient(
+        from 0deg at 50% 50%,
+        rgba(146, 238, 255, 0.34) 0deg 2deg,
+        rgba(146, 238, 255, 0) 2deg 10.5deg
+      );
+    transform: scale(0.68);
+    filter: blur(0.5px);
+  }
+
+  70% {
+    opacity: 0.84;
+    background:
+      radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0) 31%),
+      repeating-conic-gradient(
+        from 0deg at 50% 50%,
+        rgba(166, 242, 255, 0.56) 0deg 1.6deg,
+        rgba(166, 242, 255, 0) 1.6deg 8.8deg
+      );
+    transform: scale(1.02);
+    filter: blur(1px);
+  }
+
+  100% {
+    opacity: 0.96;
+    background:
+      radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0) 34%),
+      repeating-conic-gradient(
+        from 0deg at 50% 50%,
+        rgba(176, 246, 255, 0.68) 0deg 1.4deg,
+        rgba(176, 246, 255, 0) 1.4deg 7.6deg
+      );
+    transform: scale(1.28);
+    filter: blur(1.6px);
+  }
+}
+
+@keyframes flight-hyperspace-exit-flash {
+  0% {
+    opacity: 0.94;
+    background:
+      radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.86), rgba(255, 255, 255, 0) 34%),
+      radial-gradient(circle at 50% 50%, rgba(160, 241, 255, 0.6), rgba(160, 241, 255, 0) 56%);
+    box-shadow: inset 0 0 0 1px rgba(198, 248, 255, 0.7);
+  }
+
+  100% {
+    opacity: 0;
+    background:
+      radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0) 36%),
+      radial-gradient(circle at 50% 50%, rgba(160, 241, 255, 0), rgba(160, 241, 255, 0) 58%);
+    box-shadow: inset 0 0 0 1px rgba(198, 248, 255, 0);
+  }
+}
+
+@keyframes flight-jump-completion-flash {
+  0% {
+    opacity: 0.9;
+    background:
+      radial-gradient(circle at 50% 50%, rgba(125, 249, 255, 0.72), rgba(125, 249, 255, 0) 46%),
+      radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0) 38%);
+    box-shadow: inset 0 0 0 1px rgba(125, 249, 255, 0.78);
+  }
+
+  100% {
+    opacity: 0;
+    background:
+      radial-gradient(circle at 50% 50%, rgba(125, 249, 255, 0), rgba(125, 249, 255, 0) 46%),
+      radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0) 38%);
+    box-shadow: inset 0 0 0 1px rgba(125, 249, 255, 0);
+  }
+}
+
+@keyframes flight-jump-completion-stabilize {
+  0% {
+    opacity: 0.5;
+    background: radial-gradient(circle at 50% 50%, rgba(125, 249, 255, 0.34), rgba(125, 249, 255, 0) 58%);
+  }
+
+  70% {
+    opacity: 0.14;
+    background: radial-gradient(circle at 50% 50%, rgba(125, 249, 255, 0.22), rgba(125, 249, 255, 0) 64%);
+  }
+
+  100% {
+    opacity: 0;
+    background: radial-gradient(circle at 50% 50%, rgba(125, 249, 255, 0), rgba(125, 249, 255, 0) 64%);
+  }
+}
+
 .flightImpactFlashGlancing {
   animation: flight-impact-flash-glancing 260ms ease-out;
 }
@@ -1471,7 +1616,11 @@
 @media (prefers-reduced-motion: reduce) {
 
   .flightContextPrimaryImpactGlancing,
-  .flightContextPrimaryImpactCritical {
+  .flightContextPrimaryImpactCritical,
+  .flightHyperspaceOverlayActive,
+  .flightHyperspaceOverlayExitFlash,
+  .flightJumpCompletionVfxFlash,
+  .flightJumpCompletionVfxStabilize {
     animation: none;
   }
 }
@@ -1533,6 +1682,30 @@
   font-size: 0.72rem;
   letter-spacing: 0.12em;
   text-transform: uppercase;
+}
+
+.navigationViewToggleBar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  background: rgba(4, 10, 18, 0.86);
+  padding: 8px 10px;
+}
+
+.navigationViewToggleBar span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.navigationViewToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .flightContextPrimaryBody {
@@ -1627,6 +1800,25 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.galaxyTargetAction {
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.contextMessagePreviewMeta.galaxyTargetAction {
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.galaxyTargetLockButton {
+  width: fit-content;
+  max-width: 100%;
+  white-space: nowrap;
+  padding: 4px 8px;
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+}
+
 .contextFieldGrid label {
   display: grid;
   gap: 6px;
@@ -1658,6 +1850,10 @@
   padding: 10px;
   display: grid;
   gap: 8px;
+}
+
+.galaxyPrimaryCard {
+  gap: 6px;
 }
 
 .contextMessagePreviewMeta {
@@ -1694,6 +1890,19 @@
   gap: 10px;
 }
 
+.systemOverviewGridTight {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.systemOverviewGridTight > :nth-child(3n) {
+  justify-content: flex-end;
+}
+
+.systemOverviewGridTight > :nth-child(3n) strong {
+  text-align: right;
+}
+
 .systemOverviewColumn {
   display: grid;
   gap: 8px;
@@ -1712,14 +1921,38 @@
   margin: 0;
 }
 
-.systemSelectionSummary {
-  border: 1px solid var(--edge);
-  border-radius: 10px;
-  background: rgba(4, 10, 18, 0.86);
-  padding: 8px 10px;
+.galaxyFooterRow {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+
+.scannerClearanceChip {
+  position: absolute;
+  right: 8px;
+  bottom: 0;
+  border-radius: 8px;
+  background: rgba(5, 10, 18, 0.86);
+  padding: 4px 8px;
+  display: grid;
+  gap: 2px;
+  justify-items: end;
+  min-width: 136px;
+  z-index: 4;
+}
+
+.scannerClearanceChip span {
+  color: var(--muted);
+  font-size: 0.58rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.scannerClearanceChip strong {
+  color: var(--ink);
+  font-size: 0.76rem;
+  font-family: var(--font-mono), ui-monospace, monospace;
 }
 
 .systemLayerControls {
@@ -1730,7 +1963,7 @@
 .systemToolbar {
   display: flex;
   justify-content: space-between;
-  align-items: end;
+  align-items: flex-start;
   gap: 12px;
   flex-wrap: wrap;
 }
@@ -1746,6 +1979,112 @@
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.galaxyViewRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.galaxyModeStack {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+
+.galaxyModeButtons {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.galaxyModeButtons button {
+  width: auto;
+}
+
+.galaxyViewStatus {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.galaxyViewStatus strong {
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  text-align: left;
+}
+
+.galaxyControlCluster {
+  margin-left: auto;
+  display: grid;
+  justify-items: center;
+  gap: 0;
+}
+
+.galaxyPanPad {
+  width: 150px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, auto);
+  gap: 6px;
+  justify-items: center;
+}
+
+.galaxyControlButton {
+  min-width: 44px;
+  height: 36px;
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  background: rgba(5, 10, 18, 0.86);
+  color: var(--ink);
+  padding: 0;
+  font-size: 0.96rem;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.galaxyControlResetButton {
+  font-size: 1rem;
+}
+
+.galaxyPanPad button:nth-child(1) {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.galaxyPanPad button:nth-child(2) {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.galaxyPanPad button:nth-child(3) {
+  grid-column: 3;
+  grid-row: 1;
+}
+
+.galaxyPanPad button:nth-child(4) {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.galaxyPanPad button:nth-child(5) {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.galaxyPanPad button:nth-child(6) {
+  grid-column: 3;
+  grid-row: 2;
+}
+
+.galaxyPanPad button:nth-child(7) {
+  grid-column: 2;
+  grid-row: 3;
 }
 
 .systemLayerButton,
@@ -1770,14 +2109,30 @@
   border-color: rgba(255, 179, 71, 0.65);
 }
 
+.systemLayerButton.galaxyControlButton {
+  color: #06111f;
+  background: var(--accent);
+  border-color: rgba(255, 179, 71, 0.65);
+}
+
 .systemChartControls {
   display: flex;
   flex-wrap: nowrap;
-  align-items: end;
+  align-items: flex-start;
   gap: 8px;
   margin-left: auto;
+  margin-top: 20px;
   overflow-x: auto;
   padding-bottom: 2px;
+}
+
+.systemChartControlCluster {
+  margin-left: 4px;
+}
+
+.systemChartPanPad button:nth-child(8) {
+  grid-column: 1;
+  grid-row: 3;
 }
 
 .systemChartControl {
@@ -1949,19 +2304,6 @@
   height: 420px;
 }
 
-.systemChartThreeLayer {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  pointer-events: none;
-}
-
-.systemChartThreeLayer canvas {
-  width: 100% !important;
-  height: 100% !important;
-  display: block;
-}
-
 .systemChartOverlaySvg {
   position: relative;
   z-index: 2;
@@ -2016,6 +2358,24 @@
   fill: rgba(255, 179, 71, 0.2);
 }
 
+.galaxyMapSelectionLabelGroup {
+  pointer-events: none;
+}
+
+.galaxyMapSelectionLabelBox {
+  fill: rgba(5, 12, 24, 0.9);
+  stroke: var(--accent);
+  stroke-width: 1;
+}
+
+.galaxyMapSelectionLabelText {
+  fill: var(--accent);
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.05em;
+  text-transform: none;
+}
+
 .systemChartEmpty {
   margin: 0;
   color: var(--muted);
@@ -2031,7 +2391,7 @@
   background: rgba(6, 14, 26, 0.78);
   padding: 8px;
   display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(0, 0.6fr) minmax(0, 0.8fr) minmax(0, 0.8fr);
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.5fr) minmax(0, 0.7fr) minmax(0, 0.7fr) minmax(0, 0.7fr);
   gap: 8px;
 }
 
@@ -2138,6 +2498,24 @@
   color: var(--muted);
   font-size: 0.74rem;
   margin: 0;
+}
+
+.systemStatusFooter {
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  background: rgba(6, 14, 26, 0.78);
+  padding: 8px 10px;
+  display: grid;
+  gap: 4px;
+}
+
+.systemStatusFooterLine {
+  margin: 0;
+}
+
+.systemStatusFooterAction {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .flightContextActions {
@@ -2294,20 +2672,16 @@
   position: absolute;
   inset: 0;
   background:
-    repeating-linear-gradient(
-      to right,
+    repeating-linear-gradient(to right,
       rgba(118, 201, 255, 0.08) 0,
       rgba(118, 201, 255, 0.08) 1px,
       transparent 1px,
-      transparent 82px
-    ),
-    repeating-linear-gradient(
-      to bottom,
+      transparent 82px),
+    repeating-linear-gradient(to bottom,
       rgba(81, 146, 198, 0.07) 0,
       rgba(81, 146, 198, 0.07) 1px,
       transparent 1px,
-      transparent 56px
-    );
+      transparent 56px);
   opacity: 0.45;
 }
 
@@ -2319,13 +2693,11 @@
   height: 56%;
   background:
     linear-gradient(to bottom, rgba(8, 14, 24, 0.8), rgba(6, 12, 22, 0.18)),
-    repeating-linear-gradient(
-      110deg,
+    repeating-linear-gradient(110deg,
       rgba(168, 203, 233, 0.08) 0,
       rgba(168, 203, 233, 0.08) 2px,
       transparent 2px,
-      transparent 52px
-    );
+      transparent 52px);
 }
 
 .flightDockedBayCeilingLattice {
@@ -2338,13 +2710,11 @@
   border-radius: 16px 16px 8px 8px;
   background:
     linear-gradient(to bottom, rgba(70, 116, 160, 0.2), rgba(27, 53, 82, 0.05)),
-    repeating-linear-gradient(
-      to right,
+    repeating-linear-gradient(to right,
       transparent 0,
       transparent 42px,
       rgba(138, 214, 255, 0.16) 42px,
-      rgba(138, 214, 255, 0.16) 43px
-    );
+      rgba(138, 214, 255, 0.16) 43px);
 }
 
 .flightDockedBayLightStripLeft,
@@ -2409,12 +2779,10 @@
   bottom: 14%;
   height: 18%;
   border-radius: 999px;
-  background: radial-gradient(
-    ellipse at center,
-    rgba(255, 176, 80, 0.26) 0%,
-    rgba(255, 176, 80, 0.06) 58%,
-    rgba(255, 176, 80, 0) 100%
-  );
+  background: radial-gradient(ellipse at center,
+      rgba(255, 176, 80, 0.26) 0%,
+      rgba(255, 176, 80, 0.06) 58%,
+      rgba(255, 176, 80, 0) 100%);
   filter: blur(0.5px);
 }
 
@@ -2426,18 +2794,14 @@
   height: 34%;
   border-top: 1px solid rgba(125, 249, 255, 0.26);
   background:
-    linear-gradient(
-      to bottom,
+    linear-gradient(to bottom,
       rgba(19, 34, 52, 0.96) 0,
-      rgba(8, 16, 28, 0.98) 100%
-    ),
-    repeating-linear-gradient(
-      to right,
+      rgba(8, 16, 28, 0.98) 100%),
+    repeating-linear-gradient(to right,
       transparent 0,
       transparent 34px,
       rgba(125, 249, 255, 0.15) 34px,
-      rgba(125, 249, 255, 0.15) 35px
-    );
+      rgba(125, 249, 255, 0.15) 35px);
 }
 
 .flightDockedBayPadCircle {
@@ -2459,13 +2823,11 @@
   height: 28%;
   transform: translateX(-50%);
   background:
-    repeating-linear-gradient(
-      to bottom,
+    repeating-linear-gradient(to bottom,
       rgba(255, 196, 108, 0.9) 0,
       rgba(255, 196, 108, 0.9) 10px,
       rgba(255, 196, 108, 0) 10px,
-      rgba(255, 196, 108, 0) 15px
-    );
+      rgba(255, 196, 108, 0) 15px);
 }
 
 .flightDockedBayGuideLeft,
@@ -2818,6 +3180,26 @@
   color: var(--muted);
   font-size: 0.72rem;
   line-height: 1.35;
+}
+
+.flightSettingsActionButton {
+  margin-top: 10px;
+  width: 100%;
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  background: rgba(5, 10, 18, 0.86);
+  color: var(--ink);
+  padding: 8px 10px;
+  font-size: 0.74rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+
+.flightSettingsActionButton:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .flightPillButton {
@@ -3877,6 +4259,18 @@
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
+  .systemOverviewGridTight {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .systemOverviewGridTight > :nth-child(3n) {
+    justify-content: space-between;
+  }
+
+  .systemOverviewGridTight > :nth-child(3n) strong {
+    text-align: left;
+  }
+
   .systemSelectionSummary {
     grid-template-columns: 1fr;
     gap: 8px;
@@ -3889,6 +4283,7 @@
   .systemChartControls {
     width: 100%;
     margin-left: 0;
+    margin-top: 0;
   }
 
   .systemDataWorkspace {
@@ -3905,6 +4300,11 @@
 
   .contextFieldGrid {
     grid-template-columns: 1fr;
+  }
+
+  .galaxyControlCluster {
+    margin-left: 0;
+    justify-items: start;
   }
 
   .contextMarketBoard {

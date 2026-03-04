@@ -8,9 +8,9 @@ from app.db.session import get_db
 from app.models.ship import Ship
 from app.models.session import Session as DbSession
 from app.models.user import User
-from app.models.world import Station
 from app.schemas.auth import AuthResponse, LoginRequest, RegisterRequest
 from app.services.auth_service import hash_password, verify_password
+from app.services.starter_location_service import resolve_starter_station
 
 router = APIRouter()
 STARTER_CARGO_CAPACITY = 40
@@ -32,7 +32,7 @@ def _ensure_user_starter_ship(db: Session, user: User) -> None:
             db.commit()
         return
 
-    station = db.query(Station).order_by(Station.id.asc()).first()
+    station = resolve_starter_station(db)
     docked_station_id = station.id if station else None
     ship_status = "docked" if station else "in-space"
 

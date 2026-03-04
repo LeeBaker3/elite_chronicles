@@ -115,3 +115,85 @@ def test_login_backfills_cargo_hold_for_existing_ship(client, db_session):
 
     db_session.refresh(ship)
     assert ship.cargo_capacity == 40
+
+
+def test_register_prefers_lave_as_starter_system_when_available(client, db_session):
+    faction = Faction(name="Lave Faction",
+                      alignment="neutral", reputation_scale=0)
+    db_session.add(faction)
+    db_session.flush()
+
+    lave_system = StarSystem(
+        name="Lave",
+        seed="lave-seed",
+        position_x=0,
+        position_y=0,
+        position_z=0,
+        economy_type="mixed",
+        tech_level=5,
+        faction_id=faction.id,
+    )
+    other_system = StarSystem(
+        name="Other System",
+        seed="other-seed",
+        position_x=10,
+        position_y=0,
+        position_z=10,
+        economy_type="mixed",
+        tech_level=3,
+        faction_id=faction.id,
+    )
+    db_session.add_all([lave_system, other_system])
+    db_session.flush()
+
+    archetype = StationArchetype(
+        name="Starter Hub",
+        size_class="small",
+        shape="coriolis",
+        palette_json={},
+        features_json={"market": True},
+    )
+    db_session.add(archetype)
+    db_session.flush()
+
+    other_station = Station(
+        system_id=other_system.id,
+        name="Other Port",
+        archetype_id=archetype.id,
+        position_x=0,
+        position_y=0,
+        position_z=0,
+        services_json={"market": True},
+        faction_id=faction.id,
+        tech_level=2,
+        ai_story_available=False,
+    )
+    lave_station = Station(
+        system_id=lave_system.id,
+        name="Lave Station",
+        archetype_id=archetype.id,
+        position_x=5,
+        position_y=0,
+        position_z=5,
+        services_json={"market": True},
+        faction_id=faction.id,
+        tech_level=5,
+        ai_story_available=False,
+    )
+    db_session.add_all([other_station, lave_station])
+    db_session.commit()
+
+    response = client.post(
+        "/api/auth/register",
+        json={
+            "email": "lave-starter@example.com",
+            "username": "lave-starter",
+            "password": "pilot123",
+        },
+    )
+    assert response.status_code == 200
+
+    user_id = response.json()["user_id"]
+    ship = db_session.query(Ship).filter(Ship.owner_user_id == user_id).first()
+    assert ship is not None
+    assert ship.docked_station_id == lave_station.id

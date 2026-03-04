@@ -16,6 +16,7 @@ import {
 import { resolveChartPointVisual } from "../components/ui/celestialVisuals";
 import { useToast } from "../components/ui/ToastProvider";
 import { Tooltip } from "../components/ui/Tooltip";
+import { resolveScannerDisplayDistanceKm } from "./scannerDistance";
 import styles from "./page.module.css";
 
 const API_BASE =
@@ -25,6 +26,7 @@ const DEV_TOOLS_STORAGE_KEY = "elite_dev_tools_open";
 const MISSION_FILTER_STORAGE_KEY = "elite_mission_filter";
 const MISSION_SORT_STORAGE_KEY = "elite_mission_sort";
 const ACTIVE_MODE_STORAGE_KEY = "elite_active_mode";
+const NAVIGATION_VIEW_STORAGE_KEY = "elite_navigation_view";
 const LOCAL_CHART_LAYERS_STORAGE_KEY = "elite_local_chart_layers";
 const LOCAL_CHART_VIEW_STORAGE_KEY = "elite_local_chart_view";
 const LOCAL_CHART_SORT_STORAGE_KEY = "elite_local_chart_sort";
@@ -34,20 +36,18 @@ const FLIGHT_CONTACT_LABELS_STORAGE_KEY = "elite_flight_contact_labels";
 const FLIGHT_SCANNER_DEBUG_STORAGE_KEY = "elite_flight_scanner_debug";
 const FLIGHT_AUDIO_ENABLED_STORAGE_KEY = "elite_flight_audio_enabled";
 const FLIGHT_REDUCED_AUDIO_STORAGE_KEY = "elite_flight_reduced_audio";
+const FLIGHT_AUDIO_ENGINE_STORAGE_KEY = "elite_flight_audio_engine";
 const FLIGHT_3D_ENABLED = process.env.NEXT_PUBLIC_FLIGHT_3D !== "false";
 
 const FlightScene = dynamic(
   () => import("../components/ui/FlightScene").then((module) => module.FlightScene),
   { ssr: false }
 );
-const SystemChart3D = dynamic(
-  () => import("../components/ui/SystemChart3D").then((module) => module.SystemChart3D),
-  { ssr: false }
-);
 
 type AuthMode = "login" | "register";
 type TradeDirection = "buy" | "sell";
-type GameMode = "trade" | "flight" | "story" | "comms" | "ship" | "system";
+type NavigationView = "system" | "galaxy";
+type GameMode = "trade" | "flight" | "story" | "comms" | "ship" | "navigation" | "system" | "galaxy";
 const FLIGHT_PHASE = {
   IDLE: "idle",
   DOCKING_APPROACH: "docking-approach",
@@ -79,8 +79,14 @@ type FlightAudioEventName =
   | "flight.motion_loop"
   | "jump.charge_start"
   | "jump.transit_peak"
-  | "jump.exit";
+  | "jump.hyperspace_charge_start"
+  | "jump.hyperspace_transit_peak"
+  | "jump.exit"
+  | "jump.exit_stabilize"
+  | "jump.hyperspace_exit"
+  | "jump.hyperspace_exit_stabilize";
 type FlightAudioCategory = "navigation" | "propulsion" | "jump" | "docking";
+type FlightAudioEngine = "web-audio" | "media-audio";
 
 type FlightAudioDispatchSummary = {
   lastEvent: FlightAudioEventName | "none";
@@ -101,6 +107,8 @@ type FlightAudioPlaybackSummary = {
 
 const FLIGHT_MAX_SPEED_UNITS = 12;
 const SCANNER_LIST_MAX_ROWS = 8;
+const LOCAL_CHART_MAX_SHIP_ROWS = 3;
+const LOCAL_CHART_RENDER_BUDGET_MS = 12;
 const SCANNER_RANGE_PRESETS_KM = [25, 50, 100, 250, 500] as const;
 const DEFAULT_SCANNER_RANGE_KM = 100;
 const FLIGHT_DOCKING_TRANSIT_DURATION_MS = 3600;
@@ -118,7 +126,12 @@ const FLIGHT_AUDIO_EVENT_CATEGORY: Record<FlightAudioEventName, FlightAudioCateg
   "flight.motion_loop": "propulsion",
   "jump.charge_start": "jump",
   "jump.transit_peak": "jump",
+  "jump.hyperspace_charge_start": "jump",
+  "jump.hyperspace_transit_peak": "jump",
   "jump.exit": "jump",
+  "jump.exit_stabilize": "jump",
+  "jump.hyperspace_exit": "jump",
+  "jump.hyperspace_exit_stabilize": "jump",
 };
 const FLIGHT_AUDIO_EVENT_COOLDOWN_MS: Record<FlightAudioEventName, number> = {
   "nav.target_acquired": 180,
@@ -132,12 +145,17 @@ const FLIGHT_AUDIO_EVENT_COOLDOWN_MS: Record<FlightAudioEventName, number> = {
   "flight.motion_loop": 1200,
   "jump.charge_start": 900,
   "jump.transit_peak": 900,
+  "jump.hyperspace_charge_start": 900,
+  "jump.hyperspace_transit_peak": 900,
   "jump.exit": 900,
+  "jump.exit_stabilize": 1200,
+  "jump.hyperspace_exit": 900,
+  "jump.hyperspace_exit_stabilize": 1200,
 };
 const FLIGHT_AUDIO_CATEGORY_MAX_EVENTS: Record<FlightAudioCategory, number> = {
   navigation: 6,
   propulsion: 4,
-  jump: 3,
+  jump: 4,
   docking: 2,
 };
 
@@ -153,8 +171,142 @@ const FLIGHT_AUDIO_EVENT_NAMES = new Set<FlightAudioEventName>([
   "flight.motion_loop",
   "jump.charge_start",
   "jump.transit_peak",
+  "jump.hyperspace_charge_start",
+  "jump.hyperspace_transit_peak",
   "jump.exit",
+  "jump.exit_stabilize",
+  "jump.hyperspace_exit",
+  "jump.hyperspace_exit_stabilize",
 ]);
+
+const FLIGHT_MEDIA_REDUCED_AUDIO_EVENTS = new Set<FlightAudioEventName>([
+  "flight.motion_loop",
+  "flight.throttle_accel",
+  "flight.throttle_decel",
+]);
+
+const FLIGHT_MEDIA_AUDIO_CUE_MAP: Record<FlightAudioEventName, {
+  frequencyStartHz: number;
+  frequencyEndHz?: number;
+  durationSeconds: number;
+  amplitude: number;
+  waveform: "sine" | "triangle" | "sawtooth" | "square" | "hybrid";
+}> = {
+  "nav.target_acquired": {
+    frequencyStartHz: 660,
+    durationSeconds: 0.08,
+    amplitude: 0.5,
+    waveform: "triangle",
+  },
+  "nav.target_locked": {
+    frequencyStartHz: 740,
+    durationSeconds: 0.1,
+    amplitude: 0.52,
+    waveform: "triangle",
+  },
+  "nav.invalid_action": {
+    frequencyStartHz: 220,
+    durationSeconds: 0.16,
+    amplitude: 0.45,
+    waveform: "sawtooth",
+  },
+  "nav.approach_ready": {
+    frequencyStartHz: 520,
+    durationSeconds: 0.12,
+    amplitude: 0.46,
+    waveform: "triangle",
+  },
+  "dock.transit_enter": {
+    frequencyStartHz: 300,
+    frequencyEndHz: 260,
+    durationSeconds: 0.22,
+    amplitude: 0.5,
+    waveform: "hybrid",
+  },
+  "dock.transit_exit": {
+    frequencyStartHz: 560,
+    frequencyEndHz: 620,
+    durationSeconds: 0.16,
+    amplitude: 0.52,
+    waveform: "triangle",
+  },
+  "flight.throttle_accel": {
+    frequencyStartHz: 180,
+    frequencyEndHz: 220,
+    durationSeconds: 0.12,
+    amplitude: 0.36,
+    waveform: "sine",
+  },
+  "flight.throttle_decel": {
+    frequencyStartHz: 150,
+    frequencyEndHz: 120,
+    durationSeconds: 0.12,
+    amplitude: 0.36,
+    waveform: "sine",
+  },
+  "flight.motion_loop": {
+    frequencyStartHz: 120,
+    durationSeconds: 0.14,
+    amplitude: 0.3,
+    waveform: "sine",
+  },
+  "jump.charge_start": {
+    frequencyStartHz: 140,
+    frequencyEndHz: 320,
+    durationSeconds: 0.44,
+    amplitude: 0.72,
+    waveform: "hybrid",
+  },
+  "jump.transit_peak": {
+    frequencyStartHz: 980,
+    frequencyEndHz: 640,
+    durationSeconds: 0.36,
+    amplitude: 0.86,
+    waveform: "square",
+  },
+  "jump.hyperspace_charge_start": {
+    frequencyStartHz: 120,
+    frequencyEndHz: 420,
+    durationSeconds: 0.54,
+    amplitude: 0.9,
+    waveform: "hybrid",
+  },
+  "jump.hyperspace_transit_peak": {
+    frequencyStartHz: 1220,
+    frequencyEndHz: 540,
+    durationSeconds: 0.42,
+    amplitude: 0.92,
+    waveform: "square",
+  },
+  "jump.exit": {
+    frequencyStartHz: 700,
+    frequencyEndHz: 500,
+    durationSeconds: 0.3,
+    amplitude: 0.72,
+    waveform: "triangle",
+  },
+  "jump.exit_stabilize": {
+    frequencyStartHz: 520,
+    frequencyEndHz: 340,
+    durationSeconds: 0.46,
+    amplitude: 0.62,
+    waveform: "hybrid",
+  },
+  "jump.hyperspace_exit": {
+    frequencyStartHz: 880,
+    frequencyEndHz: 460,
+    durationSeconds: 0.34,
+    amplitude: 0.88,
+    waveform: "hybrid",
+  },
+  "jump.hyperspace_exit_stabilize": {
+    frequencyStartHz: 420,
+    frequencyEndHz: 260,
+    durationSeconds: 0.52,
+    amplitude: 0.68,
+    waveform: "triangle",
+  },
+};
 
 const parseFlightAudioEventName = (value: unknown): FlightAudioEventName | null => {
   if (typeof value !== "string") {
@@ -163,6 +315,82 @@ const parseFlightAudioEventName = (value: unknown): FlightAudioEventName | null 
   return FLIGHT_AUDIO_EVENT_NAMES.has(value as FlightAudioEventName)
     ? (value as FlightAudioEventName)
     : null;
+};
+
+const createMediaToneWavDataUri = (
+  frequencyStartHz: number,
+  frequencyEndHz: number,
+  durationSeconds: number,
+  amplitude: number,
+  waveform: "sine" | "triangle" | "sawtooth" | "square" | "hybrid",
+): string => {
+  const sampleRate = 48_000;
+  const sampleCount = Math.floor(sampleRate * durationSeconds);
+  const dataSize = sampleCount * 2;
+  const totalSize = 44 + dataSize;
+  const buffer = new ArrayBuffer(totalSize);
+  const view = new DataView(buffer);
+
+  const writeAscii = (offset: number, value: string): void => {
+    for (let index = 0; index < value.length; index += 1) {
+      view.setUint8(offset + index, value.charCodeAt(index));
+    }
+  };
+
+  writeAscii(0, "RIFF");
+  view.setUint32(4, totalSize - 8, true);
+  writeAscii(8, "WAVE");
+  writeAscii(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeAscii(36, "data");
+  view.setUint32(40, dataSize, true);
+
+  for (let sampleIndex = 0; sampleIndex < sampleCount; sampleIndex += 1) {
+    const time = sampleIndex / sampleRate;
+    const progress = sampleIndex / Math.max(1, sampleCount - 1);
+    const frequencyHz = (
+      frequencyStartHz
+      + ((frequencyEndHz - frequencyStartHz) * progress)
+    );
+    const phase = 2 * Math.PI * frequencyHz * time;
+    const attack = Math.min(1, time / 0.04);
+    const release = Math.min(1, (durationSeconds - time) / 0.16);
+    const envelope = Math.max(0, Math.min(1, attack, release));
+
+    const sine = Math.sin(phase);
+    const square = Math.sign(sine);
+    const saw = 2 * ((frequencyHz * time) - Math.floor(0.5 + (frequencyHz * time)));
+    const triangle = (2 / Math.PI) * Math.asin(sine);
+
+    const waveformSample = waveform === "sine"
+      ? sine
+      : waveform === "square"
+        ? square
+        : waveform === "sawtooth"
+          ? saw
+          : waveform === "triangle"
+            ? triangle
+            : (0.45 * saw) + (0.35 * triangle) + (0.2 * sine);
+
+    const layered = waveformSample + (0.2 * Math.sin(phase * 0.5));
+    const shaped = Math.tanh(layered * 1.25);
+    const sample = shaped * amplitude * envelope;
+    view.setInt16(44 + (sampleIndex * 2), Math.max(-1, Math.min(1, sample)) * 32767, true);
+  }
+
+  let binary = "";
+  const bytes = new Uint8Array(buffer);
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+
+  return `data:audio/wav;base64,${btoa(binary)}`;
 };
 
 const FLIGHT_PHASE_VALUES = new Set<FlightJumpPhase>(Object.values(FLIGHT_PHASE));
@@ -190,6 +418,10 @@ const parseLocalTargetStatus = (value: unknown): LocalTargetStatus | null => {
     ? (value as LocalTargetStatus)
     : null;
 };
+
+const createMediaDiagnosticWavDataUri = (): string => (
+  createMediaToneWavDataUri(880, 880, 1.2, 0.85, "square")
+);
 
 const isTransitFlightPhase = (phase: FlightJumpPhase): boolean => (
   phase === FLIGHT_PHASE.DOCKING_TRANSIT_IN
@@ -237,6 +469,9 @@ type ShipTelemetry = {
   fuel_current: number;
   fuel_cap: number;
   cargo_capacity: number;
+  position_x?: number;
+  position_y?: number;
+  position_z?: number;
   status: string;
   docked_station_id: number | null;
   flight_phase: FlightJumpPhase;
@@ -263,6 +498,12 @@ type FuelAlertLevel = "normal" | "warning" | "critical";
 
 const FUEL_WARNING_THRESHOLD_PERCENT = 20;
 const FUEL_CRITICAL_THRESHOLD_PERCENT = 10;
+const JUMP_FUEL_COST = 20;
+const CELESTIAL_DISTANCE_REALISM_MULTIPLIER = 1;
+const LOCAL_TRANSFER_JUMP_RECOMMENDED_DISTANCE_KM = 1_500_000;
+const HYPERSPACE_INITIATION_MIN_CLEARANCE_KM = 100;
+const STATION_SCENE_TO_WORLD_SCALE_XZ = 1 / 0.11;
+const STATION_SCENE_TO_WORLD_SCALE_Y = 1 / 0.08;
 
 const getFuelAlertLevel = (fuelPercent: number): FuelAlertLevel => {
   if (fuelPercent <= FUEL_CRITICAL_THRESHOLD_PERCENT) {
@@ -281,6 +522,7 @@ const LOCAL_CHART_LAYER_OPTIONS: { key: LocalChartLayerKey; label: string }[] = 
   { key: "station", label: "Stations" },
   { key: "ship", label: "Ships" },
 ];
+
 const DEFAULT_LOCAL_CHART_LAYERS: Record<LocalChartLayerKey, boolean> = {
   star: true,
   planet: true,
@@ -288,6 +530,65 @@ const DEFAULT_LOCAL_CHART_LAYERS: Record<LocalChartLayerKey, boolean> = {
   station: true,
   ship: true,
 };
+
+const LOCAL_CHART_MIN_ZOOM = 0.00000001;
+const LOCAL_CHART_MAX_ZOOM = 20;
+const LOCAL_CHART_BUTTON_PAN_PIXELS = 36;
+const LOCAL_CHART_VIEWPORT_WIDTH_PX = 520;
+const LOCAL_CHART_VIEWPORT_HEIGHT_PX = 420;
+const LOCAL_CHART_FIT_MARGIN_PX = 28;
+
+const clampLocalChartZoom = (zoom: number): number => (
+  Math.max(LOCAL_CHART_MIN_ZOOM, Math.min(LOCAL_CHART_MAX_ZOOM, zoom))
+);
+
+const resolveLocalChartContactType = (
+  localChartData: LocalChartResponse | null,
+  contactId: string,
+): ScannerContactType | null => {
+  if (!localChartData) {
+    return null;
+  }
+
+  if (contactId === `star-${localChartData.star.id}`) {
+    return "star";
+  }
+
+  if (contactId.startsWith("planet-")) {
+    const planetId = Number(contactId.replace("planet-", ""));
+    if (
+      Number.isInteger(planetId)
+      && localChartData.planets.some((planet) => planet.id === planetId)
+    ) {
+      return "planet";
+    }
+  }
+
+  if (contactId.startsWith("moon-")) {
+    const moonId = Number(contactId.replace("moon-", ""));
+    if (
+      Number.isInteger(moonId)
+      && Object.values(localChartData.moons_by_parent_body_id)
+        .flat()
+        .some((moon) => moon.id === moonId)
+    ) {
+      return "moon";
+    }
+  }
+
+  if (contactId.startsWith("station-")) {
+    const stationId = Number(contactId.replace("station-", ""));
+    if (
+      Number.isInteger(stationId)
+      && localChartData.stations.some((station) => station.id === stationId)
+    ) {
+      return "station";
+    }
+  }
+
+  return null;
+};
+
 type LocalChartViewPreferences = {
   zoom: number;
   center_x: number;
@@ -296,6 +597,7 @@ type LocalChartViewPreferences = {
   pitch_deg: number;
   scale_mode: SystemChartScaleMode;
 };
+
 const DEFAULT_LOCAL_CHART_VIEW: LocalChartViewPreferences = {
   zoom: 1,
   center_x: 0,
@@ -303,20 +605,6 @@ const DEFAULT_LOCAL_CHART_VIEW: LocalChartViewPreferences = {
   yaw_deg: 18,
   pitch_deg: 22,
   scale_mode: "eased",
-};
-const LOCAL_CHART_RENDER_BUDGET_MS = 16;
-const LOCAL_CHART_MAX_SHIP_ROWS = 3;
-const JUMP_FUEL_COST = 20;
-const CELESTIAL_DISTANCE_REALISM_MULTIPLIER = 1;
-const LOCAL_TRANSFER_JUMP_RECOMMENDED_DISTANCE_KM = 1_500_000;
-const SYSTEM_CHART_RADIAL_EASING_EXPONENT = 0.58;
-
-const formatChartZoomInputValue = (zoom: number): string => {
-  const normalized = Number.isFinite(zoom)
-    ? roundLocalChartControlValue(Math.max(0.1, Math.min(20, zoom)))
-    : 1;
-  const formatted = normalized.toString();
-  return formatted.startsWith("0.") ? formatted.slice(1) : formatted;
 };
 
 const buildDefaultLocalChartView = (
@@ -328,17 +616,30 @@ const buildDefaultLocalChartView = (
 
   const starX = localChartData.star.position_x;
   const starZ = localChartData.star.position_z;
-  const furthestPlanetDistanceKm = localChartData.planets.length
-    ? Math.max(
-      ...localChartData.planets.map((planet) => Math.hypot(
-        planet.position_x - starX,
-        planet.position_z - starZ,
+  const bodyDistancesKm = [
+    ...localChartData.planets.map((planet) => Math.hypot(
+      planet.position_x - starX,
+      planet.position_z - starZ,
+    )),
+    ...Object.values(localChartData.moons_by_parent_body_id)
+      .flat()
+      .map((moon) => Math.hypot(
+        moon.position_x - starX,
+        moon.position_z - starZ,
       )),
-      1,
-    )
-    : 1;
+    ...localChartData.stations.map((station) => Math.hypot(
+      station.position_x - starX,
+      station.position_z - starZ,
+    )),
+  ];
+  const furthestBodyDistanceKm = Math.max(...bodyDistancesKm, 1);
+  const fitRadiusPx = Math.max(
+    24,
+    (Math.min(LOCAL_CHART_VIEWPORT_WIDTH_PX, LOCAL_CHART_VIEWPORT_HEIGHT_PX) / 2)
+    - LOCAL_CHART_FIT_MARGIN_PX,
+  );
   const fittedZoom = roundLocalChartControlValue(
-    Math.max(0.2, Math.min(1, 2_500_000 / furthestPlanetDistanceKm)),
+    clampLocalChartZoom(fitRadiusPx / furthestBodyDistanceKm),
   );
 
   return {
@@ -575,7 +876,17 @@ const roundLocalChartControlValue = (value: number): number => {
   if (!Number.isFinite(value)) {
     return 0;
   }
-  return Number(value.toFixed(3));
+
+  const absoluteValue = Math.abs(value);
+  if (absoluteValue > 0 && absoluteValue < LOCAL_CHART_MIN_ZOOM) {
+    return Number(value.toFixed(12));
+  }
+
+  if (absoluteValue >= 0.01) {
+    return Number(value.toFixed(3));
+  }
+
+  return Number(value.toFixed(10));
 };
 
 type CollisionCheckResponse = {
@@ -620,6 +931,78 @@ type SystemMapOption = {
   id: number;
   label: string;
   stations: StationOption[];
+};
+
+type GalaxyChartViewMode = "galaxy" | "local_reachable";
+type GalaxyDatasetMode = "canonical" | "real_inspired";
+
+type GalaxySystemEntry = {
+  system_id: number;
+  name: string;
+  x: number;
+  y: number;
+  z: number;
+  economy: string;
+  government: string;
+  tech_level: number;
+  population: number;
+  reachable_from_current: boolean;
+  estimated_jump_fuel: number | null;
+  reachability_reason: string | null;
+};
+
+type GalaxySystemsResponse = {
+  current_system_id: number;
+  view_mode: GalaxyChartViewMode;
+  dataset_source?: {
+    mode: GalaxyDatasetMode;
+    source_name: string;
+    license_type: string;
+    source_version: string;
+    generated_at: string;
+  };
+  systems: GalaxySystemEntry[];
+};
+
+type GalaxySystemOverviewResponse = {
+  system: {
+    id: number;
+    name: string;
+    economy: string;
+    government: string;
+    tech_level: number;
+    population: number;
+  };
+  jump: {
+    reachable: boolean;
+    estimated_jump_fuel: number | null;
+    reason: string | null;
+    route_hops?: number[];
+    route_hop_names?: string[];
+    route_total_estimated_fuel?: number | null;
+  };
+  dataset_source?: {
+    mode: GalaxyDatasetMode;
+    source_name: string;
+    license_type: string;
+    source_version: string;
+    generated_at: string;
+  };
+  overview: {
+    planets_total: number;
+    moons_total: number;
+    stations_total: number;
+    planets: Array<{
+      name: string;
+      body_type: string;
+      orbit_index: number;
+    }>;
+    stations: Array<{
+      name: string;
+      archetype: string | null;
+      host_body_name: string | null;
+    }>;
+  };
 };
 
 type CommanderProfile = {
@@ -833,7 +1216,7 @@ const formatBodyVisualLabel = (bodyType: string, radiusKm: number): string => {
   const normalizedRadiusKm = Number.isFinite(radiusKm) && radiusKm > 0
     ? Math.round(radiusKm)
     : 0;
-  return `${normalizedBodyType} · r${normalizedRadiusKm}km`;
+  return `${normalizedBodyType} · r${normalizedRadiusKm.toLocaleString()}km`;
 };
 
 const formatScannerDistanceKm = (distanceKm: number): string => {
@@ -1051,7 +1434,7 @@ export default function Home() {
   const [scannerContacts, setScannerContacts] = useState<ScannerContact[]>([]);
   const [scannerSystemId, setScannerSystemId] = useState<number | null>(null);
   const [scannerSystemName, setScannerSystemName] = useState<string | null>(null);
-  const [scannerGenerationVersion, setScannerGenerationVersion] = useState<number | null>(null);
+  const [, setScannerGenerationVersion] = useState<number | null>(null);
   const [scannerContactsLoading, setScannerContactsLoading] = useState(false);
   const [scannerContactsError, setScannerContactsError] = useState<string | null>(null);
   const [scannerSelectedContactId, setScannerSelectedContactId] = useState<string>(() => {
@@ -1134,7 +1517,9 @@ export default function Home() {
         : "eased";
 
       return {
-        zoom: Number.isFinite(zoom) && zoom > 0 ? Math.min(20, Math.max(0.1, zoom)) : 1,
+        zoom: Number.isFinite(zoom) && zoom > 0
+          ? clampLocalChartZoom(zoom)
+          : DEFAULT_LOCAL_CHART_VIEW.zoom,
         center_x: Number.isFinite(centerX) ? centerX : 0,
         center_z: Number.isFinite(centerZ) ? centerZ : 0,
         yaw_deg: Number.isFinite(yaw) ? Math.max(-180, Math.min(180, yaw)) : DEFAULT_LOCAL_CHART_VIEW.yaw_deg,
@@ -1145,21 +1530,6 @@ export default function Home() {
       return DEFAULT_LOCAL_CHART_VIEW;
     }
   });
-  const [localChartViewHasStoredPreference] = useState<boolean>(() => {
-    if (typeof window === "undefined") {
-      return false;
-    }
-
-    try {
-      return window.localStorage.getItem(LOCAL_CHART_VIEW_STORAGE_KEY) !== null;
-    } catch {
-      return false;
-    }
-  });
-  const [localChartZoomInput, setLocalChartZoomInput] = useState<string>(() =>
-    formatChartZoomInputValue(DEFAULT_LOCAL_CHART_VIEW.zoom),
-  );
-  const [localChartZoomInputFocused, setLocalChartZoomInputFocused] = useState(false);
   const [localChartSortState, setLocalChartSortState] = useState<LocalChartSortState>(() => {
     if (typeof window === "undefined") {
       return {
@@ -1206,6 +1576,13 @@ export default function Home() {
   const [showAuthMenu, setShowAuthMenu] = useState(false);
   const [showDeveloperTools, setShowDeveloperTools] = useState(false);
   const [activeMode, setActiveMode] = useState<GameMode>("trade");
+  const [navigationView, setNavigationView] = useState<NavigationView>("system");
+  const isNavigationMode = activeMode === "navigation";
+  const isSystemModeActive = activeMode === "system"
+    || (isNavigationMode && navigationView === "system");
+  const isGalaxyModeActive = activeMode === "galaxy"
+    || (isNavigationMode && navigationView === "galaxy");
+  const isNavigationContextMode = isSystemModeActive || isGalaxyModeActive;
   const [systemChartObservability, setSystemChartObservability] = useState<SystemChartObservabilitySummary>({
     chartOpenCount: 0,
     syncSuccessCount: 0,
@@ -1325,6 +1702,25 @@ export default function Home() {
     }
   });
   const [selectedJumpSystemId, setSelectedJumpSystemId] = useState("");
+  const [galaxyChartViewMode, setGalaxyChartViewMode] =
+    useState<GalaxyChartViewMode>("local_reachable");
+  const [galaxyDatasetMode] =
+    useState<GalaxyDatasetMode>("canonical");
+  const [galaxyMapZoom, setGalaxyMapZoom] = useState(1);
+  const [galaxyMapPanX, setGalaxyMapPanX] = useState(0);
+  const [galaxyMapPanZ, setGalaxyMapPanZ] = useState(0);
+  const [galaxySystems, setGalaxySystems] = useState<GalaxySystemEntry[]>([]);
+  const [galaxySystemsLoading, setGalaxySystemsLoading] = useState(false);
+  const [galaxySystemsError, setGalaxySystemsError] = useState<string | null>(null);
+  const [galaxyCurrentSystemId, setGalaxyCurrentSystemId] = useState<number | null>(null);
+  const [selectedGalaxySystemId, setSelectedGalaxySystemId] = useState("");
+  const [galaxyMapLabelSystemId, setGalaxyMapLabelSystemId] = useState("");
+  const [galaxySystemOverview, setGalaxySystemOverview] =
+    useState<GalaxySystemOverviewResponse | null>(null);
+  const [galaxySystemOverviewLoading, setGalaxySystemOverviewLoading] =
+    useState(false);
+  const [galaxySystemOverviewError, setGalaxySystemOverviewError] =
+    useState<string | null>(null);
   const [flightSpeedUnits, setFlightSpeedUnits] = useState(0);
   const [flightRollDegrees, setFlightRollDegrees] = useState(0);
   const [flightDockingApproachTargetStationId, setFlightDockingApproachTargetStationId] =
@@ -1363,6 +1759,20 @@ export default function Home() {
       return true;
     }
   });
+  const [flightAudioEngine, setFlightAudioEngine] = useState<FlightAudioEngine>(() => {
+    if (typeof window === "undefined") {
+      return "media-audio";
+    }
+
+    try {
+      const stored = window.localStorage.getItem(FLIGHT_AUDIO_ENGINE_STORAGE_KEY);
+      return stored === "web-audio" || stored === "media-audio"
+        ? stored
+        : "media-audio";
+    } catch {
+      return "media-audio";
+    }
+  });
   const [reducedAudioPreferenceEnabled, setReducedAudioPreferenceEnabled] = useState(() => {
     if (typeof window === "undefined") {
       return false;
@@ -1379,10 +1789,11 @@ export default function Home() {
     () => reducedMotionPreferenceEnabled || reducedAudioPreferenceEnabled,
     [reducedAudioPreferenceEnabled, reducedMotionPreferenceEnabled],
   );
-  const [systemChartCanvasFocused, setSystemChartCanvasFocused] = useState(false);
   const systemChartRowRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const systemChartPointRefs = useRef<Record<string, SVGCircleElement | null>>({});
   const [flightImpactFlash, setFlightImpactFlash] = useState<"none" | "glancing" | "critical">("none");
+  const [flightJumpCompletionVfx, setFlightJumpCompletionVfx] = useState<"none" | "flash" | "stabilize" | "reduced">("none");
+  const [flightJumpVisualMode, setFlightJumpVisualMode] = useState<"none" | "hyperspace">("none");
   const [flightSceneResetKey, setFlightSceneResetKey] = useState(0);
   const [flightSpawnDirective, setFlightSpawnDirective] = useState<FlightSpawnDirective | null>(null);
   const collisionToastSignatureRef = useRef("");
@@ -1394,14 +1805,27 @@ export default function Home() {
   const dockingContactResyncAttemptsRef = useRef(0);
   const flightTransitTimerRef = useRef<number | null>(null);
   const flightTransitPhaseLockUntilRef = useRef(0);
+  const flightJumpPhaseLockUntilRef = useRef(0);
   const flightImpactFlashTimeoutRef = useRef<number | null>(null);
+  const flightJumpCompletionVfxTimeoutRef = useRef<number | null>(null);
+  const flightJumpCompletionClearTimeoutRef = useRef<number | null>(null);
+  const flightJumpStabilizeAudioTimeoutRef = useRef<number | null>(null);
+  const flightPositionSyncInFlightRef = useRef(false);
+  const flightPositionSyncLastSentAtRef = useRef(0);
+  const flightPositionSyncLastScannerRefreshAtRef = useRef(0);
+  const flightPositionSyncLastCoordsRef = useRef<{
+    x: number;
+    y: number;
+    z: number;
+  } | null>(null);
   const authExpiredHandledRef = useRef(false);
   const activeProximityCollisionContactIdRef = useRef<string | null>(null);
   const systemChartOpenCountRef = useRef(0);
   const systemChartSyncSuccessCountRef = useRef(0);
   const systemChartSyncFailureCountRef = useRef(0);
   const previousActiveModeRef = useRef<GameMode>(activeMode);
-  const autoFittedLocalChartSystemIdsRef = useRef<Set<number>>(new Set());
+  const previousNavigationViewRef = useRef<NavigationView>(navigationView);
+  const autoFittedLocalChartSystemIdRef = useRef<number | null>(null);
   const localChartViewInteractedRef = useRef(false);
   const previousFlightSpeedUnitsRef = useRef(0);
   const previousFuelAlertLevelRef = useRef<FuelAlertLevel>("normal");
@@ -1419,7 +1843,12 @@ export default function Home() {
     "flight.motion_loop": 0,
     "jump.charge_start": 0,
     "jump.transit_peak": 0,
+    "jump.hyperspace_charge_start": 0,
+    "jump.hyperspace_transit_peak": 0,
     "jump.exit": 0,
+    "jump.exit_stabilize": 0,
+    "jump.hyperspace_exit": 0,
+    "jump.hyperspace_exit_stabilize": 0,
   });
   const flightAudioCategoryWindowRef = useRef<Record<FlightAudioCategory, number[]>>({
     navigation: [],
@@ -1556,6 +1985,51 @@ export default function Home() {
       createBrowserAudioContext,
     )
   ), [flightAudioEnabled, reducedAudioEnabled]);
+  const mediaAudioDiagnosticWavUri = useMemo(
+    () => createMediaDiagnosticWavDataUri(),
+    [],
+  );
+  const mediaAudioCueUriByEvent = useMemo(
+    () => Object.fromEntries(
+      Object.entries(FLIGHT_MEDIA_AUDIO_CUE_MAP).map(([eventName, cue]) => [
+        eventName,
+        createMediaToneWavDataUri(
+          cue.frequencyStartHz,
+          cue.frequencyEndHz ?? cue.frequencyStartHz,
+          cue.durationSeconds,
+          cue.amplitude,
+          cue.waveform,
+        ),
+      ]),
+    ) as Record<FlightAudioEventName, string>,
+    [],
+  );
+
+  const playFlightMediaAudioEvent = useCallback(async (
+    eventName: FlightAudioEventName,
+  ): Promise<FlightAudioPlaybackResult> => {
+    if (!flightAudioEnabled) {
+      return "blocked_settings";
+    }
+
+    if (reducedAudioEnabled && FLIGHT_MEDIA_REDUCED_AUDIO_EVENTS.has(eventName)) {
+      return "blocked_reduced";
+    }
+
+    const toneUri = mediaAudioCueUriByEvent[eventName];
+    if (!toneUri) {
+      return "error";
+    }
+
+    try {
+      const audio = new Audio(toneUri);
+      audio.volume = 1;
+      await audio.play();
+      return "played";
+    } catch {
+      return "error";
+    }
+  }, [flightAudioEnabled, mediaAudioCueUriByEvent, reducedAudioEnabled]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1569,25 +2043,127 @@ export default function Home() {
         return;
       }
 
-      const playbackResult = flightAudioAdapter.play(parsedEventName);
-      setFlightAudioPlaybackSummary((current) => ({
-        ...current,
-        lastResult: playbackResult,
-        playedCount: current.playedCount + (playbackResult === "played" ? 1 : 0),
-        blockedSettingsCount:
-          current.blockedSettingsCount + (playbackResult === "blocked_settings" ? 1 : 0),
-        blockedReducedCount:
-          current.blockedReducedCount + (playbackResult === "blocked_reduced" ? 1 : 0),
-        unsupportedCount:
-          current.unsupportedCount + (playbackResult === "unsupported" ? 1 : 0),
-        errorCount: current.errorCount + (playbackResult === "error" ? 1 : 0),
-      }));
+      const applyPlaybackResult = (playbackResult: FlightAudioPlaybackResult): void => {
+        setFlightAudioPlaybackSummary((current) => ({
+          ...current,
+          lastResult: playbackResult,
+          playedCount: current.playedCount + (playbackResult === "played" ? 1 : 0),
+          blockedSettingsCount:
+            current.blockedSettingsCount + (playbackResult === "blocked_settings" ? 1 : 0),
+          blockedReducedCount:
+            current.blockedReducedCount + (playbackResult === "blocked_reduced" ? 1 : 0),
+          unsupportedCount:
+            current.unsupportedCount + (playbackResult === "unsupported" ? 1 : 0),
+          errorCount: current.errorCount + (playbackResult === "error" ? 1 : 0),
+        }));
+      };
+
+      if (flightAudioEngine === "media-audio") {
+        void playFlightMediaAudioEvent(parsedEventName).then(applyPlaybackResult);
+        return;
+      }
+
+      applyPlaybackResult(flightAudioAdapter.play(parsedEventName));
     };
 
     window.addEventListener("elite:flight-audio-event", onFlightAudioEvent as EventListener);
 
     return () => {
       window.removeEventListener("elite:flight-audio-event", onFlightAudioEvent as EventListener);
+    };
+  }, [flightAudioAdapter, flightAudioEngine, playFlightMediaAudioEvent]);
+
+  const handleFlightAudioTest = useCallback(async (): Promise<void> => {
+    if (!flightAudioEnabled) {
+      const message = "Enable Audio Cues in Flight Settings first.";
+      setShipOpsStatus(message);
+      showToast({ message, variant: "warning" });
+      return;
+    }
+
+    const primed = await flightAudioAdapter.primeAsync();
+    if (!primed) {
+      const message = "Audio context blocked by browser or device settings.";
+      setShipOpsStatus(message);
+      showToast({ message, variant: "warning" });
+      return;
+    }
+
+    const playbackResult = flightAudioAdapter.playDiagnosticTone();
+    const debugSnapshot = flightAudioAdapter.getDebugSnapshot();
+    setFlightAudioPlaybackSummary((current) => ({
+      ...current,
+      lastResult: playbackResult,
+      playedCount: current.playedCount + (playbackResult === "played" ? 1 : 0),
+      blockedSettingsCount:
+        current.blockedSettingsCount + (playbackResult === "blocked_settings" ? 1 : 0),
+      blockedReducedCount:
+        current.blockedReducedCount + (playbackResult === "blocked_reduced" ? 1 : 0),
+      unsupportedCount:
+        current.unsupportedCount + (playbackResult === "unsupported" ? 1 : 0),
+      errorCount: current.errorCount + (playbackResult === "error" ? 1 : 0),
+    }));
+
+    const debugSummary = debugSnapshot.contextAvailable
+      ? `context=${debugSnapshot.contextState} sampleRate=${debugSnapshot.sampleRate ?? "n/a"} baseLatency=${debugSnapshot.baseLatency ?? "n/a"} outputLatency=${debugSnapshot.outputLatency ?? "n/a"}`
+      : "context=none";
+
+    if (playbackResult === "played") {
+      setShipOpsStatus(`Audio diagnostic tone played (${debugSummary}).`);
+      showToast({ message: `Audio diagnostic tone played (${debugSummary}).`, variant: "success" });
+      return;
+    }
+
+    const message = `Audio test unavailable (${playbackResult}; ${debugSummary}).`;
+    setShipOpsStatus(message);
+    showToast({ message, variant: "warning" });
+  }, [flightAudioAdapter, flightAudioEnabled, showToast]);
+
+  const handleFlightMediaAudioTest = useCallback(async (): Promise<void> => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      const diagnosticAudio = new Audio(mediaAudioDiagnosticWavUri);
+      diagnosticAudio.volume = 1;
+      await diagnosticAudio.play();
+      const message = "Media audio diagnostic tone played.";
+      setShipOpsStatus(message);
+      showToast({ message, variant: "success" });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "unknown";
+      const message = `Media audio test unavailable (${reason}).`;
+      setShipOpsStatus(message);
+      showToast({ message, variant: "warning" });
+    }
+  }, [mediaAudioDiagnosticWavUri, showToast]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const primeAudio = (): void => {
+      void flightAudioAdapter.primeAsync().then((isPrimed) => {
+        if (!isPrimed) {
+          return;
+        }
+
+        window.removeEventListener("pointerdown", primeAudio);
+        window.removeEventListener("keydown", primeAudio);
+        window.removeEventListener("touchstart", primeAudio);
+      });
+    };
+
+    window.addEventListener("pointerdown", primeAudio);
+    window.addEventListener("keydown", primeAudio);
+    window.addEventListener("touchstart", primeAudio);
+
+    return () => {
+      window.removeEventListener("pointerdown", primeAudio);
+      window.removeEventListener("keydown", primeAudio);
+      window.removeEventListener("touchstart", primeAudio);
     };
   }, [flightAudioAdapter]);
 
@@ -1694,35 +2270,7 @@ export default function Home() {
   ): boolean => {
     const contacts = contactsOverride ?? scannerContacts;
     const scannerContact = contacts.find((contact) => contact.id === contactId) ?? null;
-    let chartContactType: ScannerContactType | null = null;
-    if (localChartData) {
-      if (contactId === `star-${localChartData.star.id}`) {
-        chartContactType = "star";
-      } else if (contactId.startsWith("planet-")) {
-        const planetId = Number(contactId.replace("planet-", ""));
-        if (Number.isInteger(planetId) && localChartData.planets.some((planet) => planet.id === planetId)) {
-          chartContactType = "planet";
-        }
-      } else if (contactId.startsWith("moon-")) {
-        const moonId = Number(contactId.replace("moon-", ""));
-        if (
-          Number.isInteger(moonId)
-          && Object.values(localChartData.moons_by_parent_body_id)
-            .flat()
-            .some((moon) => moon.id === moonId)
-        ) {
-          chartContactType = "moon";
-        }
-      } else if (contactId.startsWith("station-")) {
-        const stationId = Number(contactId.replace("station-", ""));
-        if (
-          Number.isInteger(stationId)
-          && localChartData.stations.some((station) => station.id === stationId)
-        ) {
-          chartContactType = "station";
-        }
-      }
-    }
+    const chartContactType = resolveLocalChartContactType(localChartData, contactId);
 
     const hasContact = scannerContact !== null || chartContactType !== null;
     if (!hasContact) {
@@ -1755,7 +2303,10 @@ export default function Home() {
     (telemetry: Partial<ShipTelemetry> | null | undefined): void => {
       const serverPhase = telemetry?.flight_phase;
       const parsedServerPhase = parseFlightJumpPhase(serverPhase);
-      const lockActive = Date.now() < flightTransitPhaseLockUntilRef.current;
+      const lockActive = (
+        Date.now() < flightTransitPhaseLockUntilRef.current
+        || Date.now() < flightJumpPhaseLockUntilRef.current
+      );
       if (parsedServerPhase && !lockActive) {
         setFlightJumpPhase(parsedServerPhase);
       }
@@ -1869,6 +2420,7 @@ export default function Home() {
     const storedMissionFilter = window.localStorage.getItem(MISSION_FILTER_STORAGE_KEY);
     const storedMissionSort = window.localStorage.getItem(MISSION_SORT_STORAGE_KEY);
     const storedActiveMode = window.localStorage.getItem(ACTIVE_MODE_STORAGE_KEY);
+    const storedNavigationView = window.localStorage.getItem(NAVIGATION_VIEW_STORAGE_KEY);
     if (stored) {
       setToken(stored);
     }
@@ -1889,15 +2441,25 @@ export default function Home() {
     if (storedMissionSort === "newest" || storedMissionSort === "oldest") {
       setMissionSortOrder(storedMissionSort);
     }
+    if (storedNavigationView === "system" || storedNavigationView === "galaxy") {
+      setNavigationView(storedNavigationView);
+    }
     if (
       storedActiveMode === "trade"
       || storedActiveMode === "flight"
       || storedActiveMode === "ship"
       || storedActiveMode === "story"
       || storedActiveMode === "comms"
+      || storedActiveMode === "navigation"
       || storedActiveMode === "system"
+      || storedActiveMode === "galaxy"
     ) {
-      setActiveMode(storedActiveMode);
+      if (storedActiveMode === "system" || storedActiveMode === "galaxy") {
+        setNavigationView(storedActiveMode);
+        setActiveMode("navigation");
+      } else {
+        setActiveMode(storedActiveMode);
+      }
     }
 
     setAuthStateHydrated(true);
@@ -1986,6 +2548,10 @@ export default function Home() {
     }
     window.localStorage.setItem(ACTIVE_MODE_STORAGE_KEY, activeMode);
   }, [activeMode, token]);
+
+  useEffect(() => {
+    window.localStorage.setItem(NAVIGATION_VIEW_STORAGE_KEY, navigationView);
+  }, [navigationView]);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -2109,8 +2675,9 @@ export default function Home() {
     setPassword("");
   };
 
-  const fetchInventory = useCallback(async (options?: { silent?: boolean }) => {
-    if (!stationId.trim()) return;
+  const fetchInventory = useCallback(async (options?: { silent?: boolean; stationIdOverride?: string }) => {
+    const targetStationId = (options?.stationIdOverride ?? stationId).trim();
+    if (!targetStationId) return;
     setInventoryLoading(true);
     setInventoryError(null);
     if (!options?.silent) {
@@ -2118,7 +2685,7 @@ export default function Home() {
     }
     try {
       const response = await fetch(
-        `${API_BASE}/api/stations/${stationId}/inventory`,
+        `${API_BASE}/api/stations/${targetStationId}/inventory`,
         {
           headers: token
             ? { Authorization: `Bearer ${token}` }
@@ -2626,7 +3193,13 @@ export default function Home() {
         Number.isInteger(payload.generation_version) ? payload.generation_version : null,
       );
       setScannerSelectedContactId((current) => {
-        if (current && contacts.some((contact) => contact.id === current)) {
+        if (
+          current
+          && (
+            contacts.some((contact) => contact.id === current)
+            || resolveLocalChartContactType(localChartData, current) !== null
+          )
+        ) {
           return current;
         }
 
@@ -2655,6 +3228,7 @@ export default function Home() {
       setScannerContactsLoading(false);
     }
   }, [
+    localChartData,
     recordSystemChartSelectionSync,
     shipId,
     showToast,
@@ -2719,6 +3293,134 @@ export default function Home() {
     }
   }, [emitSystemChartObservability, showToast, token]);
 
+  const fetchGalaxySystems = useCallback(async (options?: { silent?: boolean }) => {
+    if (!token) {
+      setGalaxySystems([]);
+      setGalaxySystemsError(null);
+      return;
+    }
+
+    const parsedShipId = Number(shipId);
+    if (!Number.isInteger(parsedShipId) || parsedShipId <= 0) {
+      setGalaxySystems([]);
+      setGalaxySystemsError("Ship ID must be a valid positive number.");
+      return;
+    }
+
+    setGalaxySystemsLoading(true);
+    setGalaxySystemsError(null);
+    try {
+      const params = new URLSearchParams({
+        ship_id: String(parsedShipId),
+        view_mode: galaxyChartViewMode,
+      });
+      if (galaxyDatasetMode !== "canonical") {
+        params.set("dataset_mode", galaxyDatasetMode);
+      }
+      const response = await fetch(
+        `${API_BASE}/api/systems/galaxy/systems?${params.toString()}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      const data = await response.json();
+      if (!response.ok) {
+        const message = data?.error?.message || data?.detail || "Galaxy chart unavailable.";
+        setGalaxySystems([]);
+        setGalaxySystemsError(message);
+        if (!options?.silent) {
+          showToast({ message, variant: "warning" });
+        }
+        return;
+      }
+
+      const payload = data as GalaxySystemsResponse;
+      const systems = Array.isArray(payload.systems) ? payload.systems : [];
+      const currentSystemId = Number.isInteger(payload.current_system_id)
+        ? payload.current_system_id
+        : null;
+      setGalaxyCurrentSystemId(currentSystemId);
+      setGalaxySystems(systems);
+      setSelectedGalaxySystemId((current) => {
+        if (current && systems.some((entry) => String(entry.system_id) === current)) {
+          return current;
+        }
+        if (currentSystemId !== null) {
+          const currentSystemIdString = String(currentSystemId);
+          if (systems.some((entry) => String(entry.system_id) === currentSystemIdString)) {
+            return currentSystemIdString;
+          }
+        }
+        return systems[0] ? String(systems[0].system_id) : "";
+      });
+    } catch {
+      const message = "Galaxy chart unavailable.";
+      setGalaxySystems([]);
+      setGalaxySystemsError(message);
+      if (!options?.silent) {
+        showToast({ message, variant: "warning" });
+      }
+    } finally {
+      setGalaxySystemsLoading(false);
+    }
+  }, [galaxyChartViewMode, galaxyDatasetMode, shipId, showToast, token]);
+
+  const fetchGalaxySystemOverview = useCallback(async (
+    systemId: number,
+    options?: { silent?: boolean },
+  ) => {
+    if (!token || !Number.isInteger(systemId) || systemId <= 0) {
+      setGalaxySystemOverview(null);
+      setGalaxySystemOverviewError(null);
+      return;
+    }
+
+    const parsedShipId = Number(shipId);
+    if (!Number.isInteger(parsedShipId) || parsedShipId <= 0) {
+      setGalaxySystemOverview(null);
+      setGalaxySystemOverviewError("Ship ID must be a valid positive number.");
+      return;
+    }
+
+    setGalaxySystemOverviewLoading(true);
+    setGalaxySystemOverviewError(null);
+    try {
+      const params = new URLSearchParams({ ship_id: String(parsedShipId) });
+      if (galaxyDatasetMode !== "canonical") {
+        params.set("dataset_mode", galaxyDatasetMode);
+      }
+      const response = await fetch(
+        `${API_BASE}/api/systems/galaxy/systems/${systemId}/overview?${params.toString()}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      const data = await response.json();
+      if (!response.ok) {
+        const message = data?.error?.message || data?.detail || "System overview unavailable.";
+        setGalaxySystemOverview(null);
+        setGalaxySystemOverviewError(message);
+        if (!options?.silent) {
+          showToast({ message, variant: "warning" });
+        }
+        return;
+      }
+
+      setGalaxySystemOverview(data as GalaxySystemOverviewResponse);
+    } catch {
+      const message = "System overview unavailable.";
+      setGalaxySystemOverview(null);
+      setGalaxySystemOverviewError(message);
+      if (!options?.silent) {
+        showToast({ message, variant: "warning" });
+      }
+    } finally {
+      setGalaxySystemOverviewLoading(false);
+    }
+  }, [galaxyDatasetMode, shipId, showToast, token]);
+
+  useEffect(() => {
+    setGalaxyMapZoom(1);
+    setGalaxyMapPanX(0);
+    setGalaxyMapPanZ(0);
+  }, [galaxyChartViewMode]);
+
   const triggerFlightImpactFlash = useCallback((severity: "glancing" | "critical") => {
     const transitActive = isTransitFlightPhase(flightJumpPhase);
     const dockingApproachActive = flightDockingApproachTargetStationId !== null;
@@ -2754,6 +3456,65 @@ export default function Home() {
       flightImpactFlashTimeoutRef.current = null;
     }
   }, []);
+
+  const triggerFlightJumpCompletionEffects = useCallback((
+    payload?: Record<string, unknown>,
+    options?: { jumpMode?: "system" | "hyperspace" },
+  ): void => {
+    const jumpMode = options?.jumpMode ?? "system";
+    const exitEvent = jumpMode === "hyperspace"
+      ? "jump.hyperspace_exit"
+      : "jump.exit";
+    const stabilizeEvent = jumpMode === "hyperspace"
+      ? "jump.hyperspace_exit_stabilize"
+      : "jump.exit_stabilize";
+
+    dispatchFlightAudioEvent(exitEvent, payload);
+
+    if (flightJumpStabilizeAudioTimeoutRef.current !== null) {
+      window.clearTimeout(flightJumpStabilizeAudioTimeoutRef.current);
+    }
+    flightJumpStabilizeAudioTimeoutRef.current = window.setTimeout(() => {
+      dispatchFlightAudioEvent(stabilizeEvent, payload);
+      flightJumpStabilizeAudioTimeoutRef.current = null;
+    }, 320);
+
+    if (flightJumpCompletionVfxTimeoutRef.current !== null) {
+      window.clearTimeout(flightJumpCompletionVfxTimeoutRef.current);
+    }
+    if (flightJumpCompletionClearTimeoutRef.current !== null) {
+      window.clearTimeout(flightJumpCompletionClearTimeoutRef.current);
+    }
+
+    if (reducedMotionPreferenceEnabled) {
+      setFlightJumpCompletionVfx("reduced");
+      flightJumpCompletionClearTimeoutRef.current = window.setTimeout(() => {
+        setFlightJumpCompletionVfx("none");
+        flightJumpCompletionClearTimeoutRef.current = null;
+      }, 900);
+      return;
+    }
+
+    setFlightJumpCompletionVfx("flash");
+    flightJumpCompletionVfxTimeoutRef.current = window.setTimeout(() => {
+      setFlightJumpCompletionVfx("stabilize");
+      flightJumpCompletionVfxTimeoutRef.current = null;
+    }, 280);
+    flightJumpCompletionClearTimeoutRef.current = window.setTimeout(() => {
+      setFlightJumpCompletionVfx("none");
+      flightJumpCompletionClearTimeoutRef.current = null;
+    }, 1450);
+  }, [dispatchFlightAudioEvent, reducedMotionPreferenceEnabled]);
+
+  useEffect(() => {
+    if (
+      flightJumpPhase === FLIGHT_PHASE.IDLE
+      || flightJumpPhase === FLIGHT_PHASE.DESTINATION_LOCKED
+      || flightJumpPhase === FLIGHT_PHASE.ERROR
+    ) {
+      setFlightJumpVisualMode("none");
+    }
+  }, [flightJumpPhase]);
 
   const fetchCollisionTelemetry = useCallback(async (options?: { silent?: boolean }) => {
     if (!token) {
@@ -2903,24 +3664,6 @@ export default function Home() {
     setMissionsError(null);
 
     try {
-      const availableResponse = await fetch(`${API_BASE}/api/missions/available`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const availableData = await availableResponse.json();
-      if (!availableResponse.ok) {
-        const message =
-          availableData?.error?.message ||
-          availableData?.detail ||
-          "Unable to load available missions.";
-        setMissionsAvailable([]);
-        setMissionsAssigned([]);
-        setMissionsError(message);
-        if (!options?.silent) {
-          showToast({ message, variant: "warning" });
-        }
-        return;
-      }
-
       const assignedResponse = await fetch(`${API_BASE}/api/missions/me`, {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -2939,8 +3682,40 @@ export default function Home() {
         return;
       }
 
+      const assignedMissions = Array.isArray(assignedData) ? assignedData : [];
+      setMissionsAssigned(assignedMissions);
+
+      const canBrowseStationMissions = (
+        commanderProfile?.location_type === "station"
+        && Number.isInteger(commanderProfile.location_id)
+        && Number(commanderProfile.location_id) > 0
+      );
+
+      if (!canBrowseStationMissions) {
+        setMissionsAvailable([]);
+        setMissionsError(null);
+        return;
+      }
+
+      const availableResponse = await fetch(`${API_BASE}/api/missions/available`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const availableData = await availableResponse.json();
+      if (!availableResponse.ok) {
+        const message =
+          availableData?.error?.message ||
+          availableData?.detail ||
+          "Unable to load available missions.";
+        setMissionsAvailable([]);
+        setMissionsError(message);
+        if (!options?.silent) {
+          showToast({ message, variant: "warning" });
+        }
+        return;
+      }
+
       setMissionsAvailable(Array.isArray(availableData) ? availableData : []);
-      setMissionsAssigned(Array.isArray(assignedData) ? assignedData : []);
+      setMissionsError(null);
       setMissionStatus("Mission board synchronized.");
     } catch {
       const message = "Unable to load mission board.";
@@ -2953,7 +3728,7 @@ export default function Home() {
     } finally {
       setMissionsLoading(false);
     }
-  }, [showToast, token]);
+  }, [commanderProfile?.location_id, commanderProfile?.location_type, showToast, token]);
 
   const handleAcceptMission = useCallback(async (missionId: number) => {
     if (!token) {
@@ -3218,6 +3993,206 @@ export default function Home() {
     [selectedJumpSystemId, systemMapOptions],
   );
 
+  const selectedGalaxySystem = useMemo(
+    () => galaxySystems.find((entry) => String(entry.system_id) === selectedGalaxySystemId) ?? null,
+    [galaxySystems, selectedGalaxySystemId],
+  );
+
+  const galaxyMapPlot = useMemo(() => {
+    const width = 960;
+    const height = 420;
+    const padding = 24;
+
+    if (!galaxySystems.length) {
+      return {
+        width,
+        height,
+        reachabilityZone: null as {
+          center_x: number;
+          center_y: number;
+          radius_x: number;
+          radius_y: number;
+        } | null,
+        points: [] as Array<{
+          system_id: number;
+          name: string;
+          plot_x: number;
+          plot_y: number;
+          reachable: boolean;
+          selected: boolean;
+          current: boolean;
+        }>,
+      };
+    }
+
+    const currentSystem = galaxyCurrentSystemId !== null
+      ? galaxySystems.find((entry) => entry.system_id === galaxyCurrentSystemId) ?? null
+      : null;
+
+    const dataMinX = Math.min(...galaxySystems.map((entry) => entry.x));
+    const dataMaxX = Math.max(...galaxySystems.map((entry) => entry.x));
+    const dataMinZ = Math.min(...galaxySystems.map((entry) => entry.z));
+    const dataMaxZ = Math.max(...galaxySystems.map((entry) => entry.z));
+
+    const reachableSystems = galaxySystems.filter((entry) => entry.reachable_from_current);
+    const maxReachableDistanceWorld = currentSystem !== null && reachableSystems.length > 0
+      ? reachableSystems.reduce((currentMax, system) => {
+        const dx = system.x - currentSystem.x;
+        const dz = system.z - currentSystem.z;
+        const distance = Math.sqrt((dx * dx) + (dz * dz));
+        return Math.max(currentMax, distance);
+      }, 0)
+      : 0;
+
+    const localReachableBoundaryMarginFactor = 1.15;
+    const displayReachableDistanceWorld = Math.max(
+      1,
+      maxReachableDistanceWorld * localReachableBoundaryMarginFactor,
+    );
+
+    const mapMinX = galaxyChartViewMode === "local_reachable" && currentSystem !== null
+      ? currentSystem.x - displayReachableDistanceWorld
+      : dataMinX;
+    const mapMaxX = galaxyChartViewMode === "local_reachable" && currentSystem !== null
+      ? currentSystem.x + displayReachableDistanceWorld
+      : dataMaxX;
+    const mapMinZ = galaxyChartViewMode === "local_reachable" && currentSystem !== null
+      ? currentSystem.z - displayReachableDistanceWorld
+      : dataMinZ;
+    const mapMaxZ = galaxyChartViewMode === "local_reachable" && currentSystem !== null
+      ? currentSystem.z + displayReachableDistanceWorld
+      : dataMaxZ;
+
+    const baseXSpan = Math.max(1, mapMaxX - mapMinX);
+    const baseZSpan = Math.max(1, mapMaxZ - mapMinZ);
+    const zoomFactor = Math.max(1, Math.min(3, galaxyMapZoom));
+    const xSpan = Math.max(1, baseXSpan / zoomFactor);
+    const zSpan = Math.max(1, baseZSpan / zoomFactor);
+    const mapCenterX = ((mapMinX + mapMaxX) / 2) + galaxyMapPanX;
+    const mapCenterZ = ((mapMinZ + mapMaxZ) / 2) + galaxyMapPanZ;
+    const visibleMinX = mapCenterX - (xSpan / 2);
+    const visibleMinZ = mapCenterZ - (zSpan / 2);
+    const xScale = (width - (padding * 2)) / xSpan;
+    const zScale = (height - (padding * 2)) / zSpan;
+
+    const points = [...galaxySystems]
+      .sort((left, right) => left.system_id - right.system_id)
+      .map((entry) => {
+        const normalizedX = (entry.x - visibleMinX) / xSpan;
+        const normalizedZ = (entry.z - visibleMinZ) / zSpan;
+
+        return {
+          system_id: entry.system_id,
+          name: entry.name,
+          plot_x: padding + (normalizedX * (width - (padding * 2))),
+          plot_y: height - padding - (normalizedZ * (height - (padding * 2))),
+          reachable: entry.reachable_from_current,
+          selected: String(entry.system_id) === selectedGalaxySystemId,
+          current: galaxyCurrentSystemId !== null && entry.system_id === galaxyCurrentSystemId,
+        };
+      });
+
+    const currentPoint = currentSystem !== null
+      ? points.find((point) => point.system_id === currentSystem.system_id) ?? null
+      : null;
+
+    let reachabilityZone: {
+      center_x: number;
+      center_y: number;
+      radius_x: number;
+      radius_y: number;
+    } | null = null;
+
+    if (currentPoint !== null && maxReachableDistanceWorld > 0) {
+      reachabilityZone = {
+        center_x: currentPoint.plot_x,
+        center_y: currentPoint.plot_y,
+        radius_x: Math.max(18, displayReachableDistanceWorld * xScale),
+        radius_y: Math.max(18, displayReachableDistanceWorld * zScale),
+      };
+    }
+
+    return {
+      width,
+      height,
+      reachabilityZone,
+      points,
+    };
+  }, [
+    galaxyChartViewMode,
+    galaxyCurrentSystemId,
+    galaxyMapPanX,
+    galaxyMapPanZ,
+    galaxyMapZoom,
+    galaxySystems,
+    selectedGalaxySystemId,
+  ]);
+
+  const galaxyLocalSelectedLabel = useMemo(() => {
+    if (galaxyChartViewMode !== "local_reachable") {
+      return null;
+    }
+    if (!selectedGalaxySystemId || galaxyMapLabelSystemId !== selectedGalaxySystemId) {
+      return null;
+    }
+
+    const selectedPoint = galaxyMapPlot.points.find(
+      (point) => String(point.system_id) === selectedGalaxySystemId,
+    );
+    if (!selectedPoint) {
+      return null;
+    }
+
+    const labelText = selectedPoint.name;
+    const labelHeight = 18;
+    const labelPaddingX = 6;
+    const estimatedTextWidth = Math.max(56, Math.ceil(labelText.length * 6.4));
+    const labelWidth = estimatedTextWidth + (labelPaddingX * 2);
+    const minX = 8;
+    const maxX = galaxyMapPlot.width - labelWidth - 8;
+    const x = Math.max(minX, Math.min(maxX, selectedPoint.plot_x - (labelWidth / 2)));
+    const preferredY = selectedPoint.plot_y - 28;
+    const y = preferredY < 8
+      ? Math.min(galaxyMapPlot.height - labelHeight - 8, selectedPoint.plot_y + 12)
+      : preferredY;
+
+    return {
+      labelText,
+      x,
+      y,
+      width: labelWidth,
+      height: labelHeight,
+    };
+  }, [
+    galaxyChartViewMode,
+    galaxyMapLabelSystemId,
+    galaxyMapPlot.height,
+    galaxyMapPlot.points,
+    galaxyMapPlot.width,
+    selectedGalaxySystemId,
+  ]);
+
+  const galaxyRouteSummary = useMemo(() => {
+    if (!galaxySystemOverview) {
+      return "No route suggested.";
+    }
+
+    if (galaxySystemOverview.jump.reachable) {
+      return "Direct jump is reachable.";
+    }
+
+    const hopNames = galaxySystemOverview.jump.route_hop_names ?? [];
+    const hopCount = hopNames.length;
+    if (hopCount === 0) {
+      return "No multi-hop route available.";
+    }
+
+    const totalFuel = galaxySystemOverview.jump.route_total_estimated_fuel;
+    return totalFuel === null || typeof totalFuel === "undefined"
+      ? `${hopCount} hop route: ${hopNames.join(" → ")}`
+      : `${hopCount} hop route (${totalFuel} fuel): ${hopNames.join(" → ")}`;
+  }, [galaxySystemOverview]);
+
   const jumpTargetStations = useMemo(
     () => selectedJumpSystem?.stations ?? [],
     [selectedJumpSystem],
@@ -3232,6 +4207,9 @@ export default function Home() {
   }, [dockStationId, jumpTargetStations]);
 
   const jumpTargetSystemLabel = useMemo(() => {
+    if (selectedGalaxySystem) {
+      return selectedGalaxySystem.name;
+    }
     if (selectedJumpSystem && scannerSystemId === selectedJumpSystem.id && scannerSystemName) {
       return scannerSystemName;
     }
@@ -3239,7 +4217,14 @@ export default function Home() {
       return localChartData.system.name;
     }
     return selectedJumpSystem?.label ?? "No system selected";
-  }, [localChartData?.system.id, localChartData?.system.name, scannerSystemId, scannerSystemName, selectedJumpSystem]);
+  }, [
+    localChartData?.system.id,
+    localChartData?.system.name,
+    scannerSystemId,
+    scannerSystemName,
+    selectedGalaxySystem,
+    selectedJumpSystem,
+  ]);
 
   const jumpTargetStationLabel = useMemo(() => {
     if (!jumpTargetStationId) {
@@ -3247,6 +4232,18 @@ export default function Home() {
     }
     return formatStationLabel(jumpTargetStationId);
   }, [formatStationLabel, jumpTargetStationId]);
+
+  const galaxyTargetCoordinates = useMemo(() => {
+    const selectedSystemId = Number(selectedJumpSystemId);
+    const selectedSystem = selectedGalaxySystem
+      ?? (Number.isInteger(selectedSystemId)
+        ? galaxySystems.find((entry) => entry.system_id === selectedSystemId) ?? null
+        : null);
+    if (!selectedSystem) {
+      return "Coordinates unavailable";
+    }
+    return `X ${selectedSystem.x.toFixed(1)} · Y ${selectedSystem.y.toFixed(1)} · Z ${selectedSystem.z.toFixed(1)}`;
+  }, [galaxySystems, selectedGalaxySystem, selectedJumpSystemId]);
 
   const missionStatusCounts = useMemo(() => {
     const accepted = missionsAssigned.filter((mission) => mission.status === "accepted").length;
@@ -3501,7 +4498,7 @@ export default function Home() {
     computeDurationMs: number;
   }>(() => {
     const startedAt = performance.now();
-    const effectiveZoom = Math.min(20, Math.max(0.1, localChartView.zoom));
+    const effectiveZoom = clampLocalChartZoom(localChartView.zoom);
     const rows = localChartRows.map((row) => {
       if (!row) {
         return null;
@@ -3528,12 +4525,10 @@ export default function Home() {
   );
 
   const resetLocalChartView = useCallback((): void => {
-    setLocalChartZoomInputFocused(false);
     setLocalChartView((current) => ({
       ...fittedDefaultLocalChartView,
       scale_mode: current.scale_mode,
     }));
-    setLocalChartZoomInput(formatChartZoomInputValue(fittedDefaultLocalChartView.zoom));
   }, [fittedDefaultLocalChartView]);
 
   const localChartSortedDisplayRows = useMemo<(LocalChartRow | null)[]>(() => {
@@ -3599,7 +4594,9 @@ export default function Home() {
   );
 
   useEffect(() => {
-    if (activeMode === "system" && previousActiveModeRef.current !== "system") {
+    const wasSystemMode = previousActiveModeRef.current === "system"
+      || (previousActiveModeRef.current === "navigation" && previousNavigationViewRef.current === "system");
+    if (isSystemModeActive && !wasSystemMode) {
       systemChartOpenCountRef.current += 1;
       emitSystemChartObservability("chart-open", {
         openCount: systemChartOpenCountRef.current,
@@ -3607,10 +4604,11 @@ export default function Home() {
     }
 
     previousActiveModeRef.current = activeMode;
-  }, [activeMode, emitSystemChartObservability]);
+    previousNavigationViewRef.current = navigationView;
+  }, [activeMode, emitSystemChartObservability, isSystemModeActive, navigationView]);
 
   useEffect(() => {
-    if (activeMode !== "system") {
+    if (!isSystemModeActive) {
       return;
     }
 
@@ -3625,8 +4623,8 @@ export default function Home() {
       zoom: localChartView.zoom,
     });
   }, [
-    activeMode,
     emitSystemChartObservability,
+    isSystemModeActive,
     localChartDisplayResult.computeDurationMs,
     localChartView.zoom,
     visibleLocalChartContacts.length,
@@ -3655,13 +4653,7 @@ export default function Home() {
   );
 
   const selectedSystemChartDistanceLabel = useMemo(() => {
-    const selectedContactId = selectedSystemChartContact?.id;
-    const liveDistanceKm = selectedContactId
-      ? scannerLiveContacts.find((contact) => contact.id === selectedContactId)?.distance
-      : null;
-    const baseDistanceKm = Number.isFinite(liveDistanceKm)
-      ? Math.max(0, Number(liveDistanceKm))
-      : selectedSystemChartContact?.distance_km;
+    const baseDistanceKm = selectedSystemChartContact?.distance_km;
     if (baseDistanceKm === null || baseDistanceKm === undefined) {
       return "Range unavailable";
     }
@@ -3673,37 +4665,17 @@ export default function Home() {
       ? baseDistanceKm * CELESTIAL_DISTANCE_REALISM_MULTIPLIER
       : baseDistanceKm;
 
-    return `${distanceKm.toFixed(1)} km`;
-  }, [scannerLiveContacts, selectedSystemChartContact]);
-
-  const selectedSystemChartTargetability = useMemo(() => {
-    if (!selectedSystemChartContact) {
-      return "No target selected";
-    }
-    if (selectedSystemChartContact.contact_type === "station") {
-      return "Docking target";
-    }
-    if (selectedSystemChartContact.contact_type === "ship") {
-      return "Track only";
-    }
-    return "Navigation reference";
+    return `${distanceKm.toLocaleString(undefined, {
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 1,
+    })} km`;
   }, [selectedSystemChartContact]);
 
   const selectedSystemChartDistanceKm = useMemo(() => {
-    const selectedContactId = selectedSystemChartContact?.id;
-    const liveDistanceKm = selectedContactId
-      ? scannerLiveContacts.find((contact) => contact.id === selectedContactId)?.distance
-      : null;
     const isCelestialContact = selectedSystemChartContact?.contact_type === "planet"
       || selectedSystemChartContact?.contact_type === "moon"
       || selectedSystemChartContact?.contact_type === "star";
 
-    if (Number.isFinite(liveDistanceKm)) {
-      const distanceKm = Math.max(0, Number(liveDistanceKm));
-      return isCelestialContact
-        ? distanceKm * CELESTIAL_DISTANCE_REALISM_MULTIPLIER
-        : distanceKm;
-    }
     if (selectedSystemChartContact?.distance_km === null || selectedSystemChartContact?.distance_km === undefined) {
       return null;
     }
@@ -3711,7 +4683,7 @@ export default function Home() {
     return isCelestialContact
       ? distanceKm * CELESTIAL_DISTANCE_REALISM_MULTIPLIER
       : distanceKm;
-  }, [scannerLiveContacts, selectedSystemChartContact]);
+  }, [selectedSystemChartContact]);
 
   const selectedSystemChartContactType = selectedSystemChartContact?.contact_type ?? null;
   const selectedSystemChartSupportsWaypoint =
@@ -4037,7 +5009,6 @@ export default function Home() {
     systemTargetBlockReason,
   ]);
 
-  const localChartContractVersionLabel = localChartData?.system.contract_version || "local-chart.v0";
   const localChartMutableState = localChartData?.mutable_state;
   const localChartFlightPhaseLabel = localChartMutableState?.flight_phase || "idle";
   const localChartTargetContactId = localChartMutableState?.local_target_contact_id || null;
@@ -4068,7 +5039,7 @@ export default function Home() {
   ]);
   const localChartTargetStatusLabel = localChartMutableState?.local_target_status || "none";
   const localChartAudioHintSummary =
-    localChartMutableState && localChartMutableState.audio_event_hints.length
+    localChartMutableState?.audio_event_hints?.length
       ? localChartMutableState.audio_event_hints.slice(0, 2).join(", ")
       : "none";
   const localChartAudioHints = localChartMutableState?.audio_event_hints;
@@ -4087,21 +5058,6 @@ export default function Home() {
 
     return uniqueEvents;
   }, [localChartAudioHints]);
-  const localChartTransitionLabel = useMemo(() => {
-    if (!localChartMutableState?.transition_started_at) {
-      return "-";
-    }
-    const parsed = new Date(localChartMutableState.transition_started_at);
-    if (Number.isNaN(parsed.getTime())) {
-      return "-";
-    }
-    return parsed.toLocaleTimeString("en-GB", {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: false,
-    });
-  }, [localChartMutableState?.transition_started_at]);
   const localChartTargetContactLabel = useMemo(() => {
     if (!localChartTargetContactId) {
       return "none";
@@ -4118,7 +5074,7 @@ export default function Home() {
   }, [localChartTargetContactId, scannerContacts, visibleLocalChartContacts]);
 
   useEffect(() => {
-    if (activeMode !== "system" || !visibleLocalChartContacts.length) {
+    if (!isSystemModeActive || !visibleLocalChartContacts.length) {
       return;
     }
 
@@ -4149,7 +5105,7 @@ export default function Home() {
       scannerContacts,
     );
   }, [
-    activeMode,
+    isSystemModeActive,
     localChartTargetContactId,
     scannerContacts,
     scannerSelectedContactId,
@@ -4226,7 +5182,6 @@ export default function Home() {
   const systemChartPlot = useMemo(() => {
     const viewportWidth = 520;
     const viewportHeight = 420;
-    const padding = 28;
     const contacts = localChartRows.filter((row): row is LocalChartRow => row !== null);
 
     if (!contacts.length) {
@@ -4252,261 +5207,44 @@ export default function Home() {
           selected: boolean;
           targeted: boolean;
         }>,
+        renderZoom: clampLocalChartZoom(localChartView.zoom),
       };
     }
 
-    const yawRad = (localChartView.yaw_deg * Math.PI) / 180;
-    const pitchRad = (localChartView.pitch_deg * Math.PI) / 180;
-    const cosYaw = Math.cos(yawRad);
-    const sinYaw = Math.sin(yawRad);
-    const cosPitch = Math.cos(pitchRad);
-    const sinPitch = Math.sin(pitchRad);
-    const effectiveZoom = Math.max(0.1, Math.min(20, localChartView.zoom));
-    const isEasedScaleMode = localChartView.scale_mode === "eased";
-
-    const transformWorldPointLinear = (
+    const effectiveZoom = clampLocalChartZoom(localChartView.zoom);
+    const projectTopDown = (
       worldX: number,
-      worldY: number,
       worldZ: number,
-    ): { x: number; y: number; z: number } => {
-      const baseX = (worldX - localChartView.center_x) * effectiveZoom;
-      const baseY = worldY * effectiveZoom;
-      const baseZ = (worldZ - localChartView.center_z) * effectiveZoom;
-
-      const yawX = (baseX * cosYaw) - (baseZ * sinYaw);
-      const yawZ = (baseX * sinYaw) + (baseZ * cosYaw);
-      const pitchY = (baseY * cosPitch) - (yawZ * sinPitch);
-      const pitchZ = (baseY * sinPitch) + (yawZ * cosPitch);
-
-      return {
-        x: yawX,
-        y: pitchY,
-        z: pitchZ,
-      };
-    };
-
-    const transformedLinear = contacts.map((contact) => ({
-      contact,
-      ...transformWorldPointLinear(contact.chart_x, contact.chart_y, contact.chart_z),
-    }));
-
-    const maxPlanarExtentLinear = Math.max(
-      ...transformedLinear.map((entry) => Math.hypot(entry.x, entry.y)),
-      1,
-    );
-
-    const transformed = transformedLinear.map((entry) => {
-      if (!isEasedScaleMode) {
-        return entry;
-      }
-
-      const planarDistance = Math.hypot(entry.x, entry.y);
-      const normalizedDistance = Math.max(
-        0,
-        Math.min(1, planarDistance / maxPlanarExtentLinear),
-      );
-      const easedDistance = Math.pow(
-        normalizedDistance,
-        SYSTEM_CHART_RADIAL_EASING_EXPONENT,
-      ) * maxPlanarExtentLinear;
-      const planarScale = planarDistance > 0
-        ? easedDistance / planarDistance
-        : 0;
-
-      return {
-        ...entry,
-        x: entry.x * planarScale,
-        y: entry.y * planarScale,
-      };
+    ): { x: number; y: number } => ({
+      x: (viewportWidth / 2) + ((worldX - localChartView.center_x) * effectiveZoom),
+      y: (viewportHeight / 2) - ((worldZ - localChartView.center_z) * effectiveZoom),
     });
 
-    const maxPlanarExtent = Math.max(
-      ...transformed.map((entry) => Math.hypot(entry.x, entry.y)),
-      1,
-    );
-
-    const projectionScale = Math.max(
-      0.0001,
-      ((Math.min(viewportWidth, viewportHeight) / 2) - padding) / maxPlanarExtent,
-    );
-
-    const minDepth = Math.min(...transformed.map((entry) => entry.z));
-    const maxDepth = Math.max(...transformed.map((entry) => entry.z));
-    const depthSpan = Math.max(1, maxDepth - minDepth);
-
-    const points = transformed
-      .sort((left, right) => left.z - right.z)
-      .map((entry) => {
+    const points = contacts
+      .map((contact) => {
         const style = resolveChartPointVisual(
-          entry.contact.body_kind,
-          entry.contact.body_type,
-          entry.contact.radius_km,
+          contact.body_kind,
+          contact.body_type,
+          contact.radius_km,
         );
-        const depthNorm = (entry.z - minDepth) / depthSpan;
-        const depthRadius = style.radius * (0.72 + (depthNorm * 0.58));
+        const projectedPoint = projectTopDown(contact.chart_x, contact.chart_z);
 
         return {
-          id: entry.contact.id,
-          contact_type: entry.contact.contact_type,
-          name: entry.contact.name,
-          plot_x: (viewportWidth / 2) + (entry.x * projectionScale),
-          plot_y: (viewportHeight / 2) - (entry.y * projectionScale),
-          radius: depthRadius,
+          id: contact.id,
+          contact_type: contact.contact_type,
+          name: contact.name,
+          plot_x: projectedPoint.x,
+          plot_y: projectedPoint.y,
+          radius: style.radius,
           color: style.color,
           token: style.token,
-          depth: entry.z,
-          opacity: 0.5 + (depthNorm * 0.5),
-          selected: entry.contact.id === scannerSelectedContactId,
-          targeted: entry.contact.id === activeSystemTargetContactId,
+          depth: contact.chart_y,
+          opacity: 0.92,
+          selected: contact.id === scannerSelectedContactId,
+          targeted: contact.id === activeSystemTargetContactId,
         };
-      });
-
-    const overlapThresholdPx = 12;
-    const overlapPointIndexes = points
-      .map((point, index) => (point.contact_type === "star" ? -1 : index))
-      .filter((index) => index >= 0);
-    const visitedOverlapIndexes = new Set<number>();
-    const clampPlotPosition = (value: number, max: number): number => {
-      return Math.max(padding, Math.min(max - padding, value));
-    };
-
-    overlapPointIndexes.forEach((startIndex) => {
-      if (visitedOverlapIndexes.has(startIndex)) {
-        return;
-      }
-
-      const cluster: number[] = [];
-      const queue: number[] = [startIndex];
-
-      while (queue.length) {
-        const currentIndex = queue.shift();
-        if (typeof currentIndex !== "number" || visitedOverlapIndexes.has(currentIndex)) {
-          continue;
-        }
-
-        visitedOverlapIndexes.add(currentIndex);
-        cluster.push(currentIndex);
-
-        const currentPoint = points[currentIndex];
-        overlapPointIndexes.forEach((candidateIndex) => {
-          if (visitedOverlapIndexes.has(candidateIndex) || candidateIndex === currentIndex) {
-            return;
-          }
-          const candidatePoint = points[candidateIndex];
-          const separation = Math.hypot(
-            candidatePoint.plot_x - currentPoint.plot_x,
-            candidatePoint.plot_y - currentPoint.plot_y,
-          );
-          if (separation < overlapThresholdPx) {
-            queue.push(candidateIndex);
-          }
-        });
-      }
-
-      if (cluster.length <= 1) {
-        return;
-      }
-
-      cluster.sort((leftIndex, rightIndex) => {
-        const leftPoint = points[leftIndex];
-        const rightPoint = points[rightIndex];
-        if (leftPoint.selected !== rightPoint.selected) {
-          return leftPoint.selected ? -1 : 1;
-        }
-        return leftPoint.id.localeCompare(rightPoint.id);
-      });
-
-      const centroid = cluster.reduce(
-        (accumulator, pointIndex) => {
-          const point = points[pointIndex];
-          return {
-            x: accumulator.x + point.plot_x,
-            y: accumulator.y + point.plot_y,
-          };
-        },
-        { x: 0, y: 0 },
-      );
-      centroid.x /= cluster.length;
-      centroid.y /= cluster.length;
-
-      const zoomMin = 0.1;
-      const zoomMax = 20;
-      const zoomProgress = Math.max(
-        0,
-        Math.min(
-          1,
-          (Math.log(effectiveZoom) - Math.log(zoomMin))
-          / (Math.log(zoomMax) - Math.log(zoomMin)),
-        ),
-      );
-      const zoomSpreadFactor = 2.2 - (1.85 * zoomProgress);
-      const spreadRadius = Math.max(4, (cluster.length - 1) * 4.5 * zoomSpreadFactor);
-      const maxSpreadRadius = Math.max(
-        4,
-        Math.min(
-          ((viewportWidth - (padding * 2)) / 2) - 2,
-          ((viewportHeight - (padding * 2)) / 2) - 2,
-        ),
-      );
-      const boundedSpreadRadius = Math.min(spreadRadius, maxSpreadRadius);
-      const normalizedSpreadCenterX = Math.max(
-        padding + boundedSpreadRadius + 2,
-        Math.min(viewportWidth - padding - boundedSpreadRadius - 2, centroid.x),
-      );
-      const normalizedSpreadCenterY = Math.max(
-        padding + boundedSpreadRadius + 2,
-        Math.min(viewportHeight - padding - boundedSpreadRadius - 2, centroid.y),
-      );
-      cluster.forEach((pointIndex, clusterIndex) => {
-        const angle = (-Math.PI / 2) + ((Math.PI * 2 * clusterIndex) / cluster.length);
-        points[pointIndex].plot_x = clampPlotPosition(
-          normalizedSpreadCenterX + (Math.cos(angle) * boundedSpreadRadius),
-          viewportWidth,
-        );
-        points[pointIndex].plot_y = clampPlotPosition(
-          normalizedSpreadCenterY + (Math.sin(angle) * boundedSpreadRadius),
-          viewportHeight,
-        );
-      });
-    });
-
-    const starPoint = points.find((point) => point.contact_type === "star") ?? null;
-    if (starPoint) {
-      const minimumStarSeparationPx = Math.max(14, starPoint.radius + 8);
-
-      points.forEach((point) => {
-        if (point.contact_type === "star") {
-          return;
-        }
-
-        const deltaX = point.plot_x - starPoint.plot_x;
-        const deltaY = point.plot_y - starPoint.plot_y;
-        const distanceFromStar = Math.hypot(deltaX, deltaY);
-        if (distanceFromStar >= minimumStarSeparationPx) {
-          return;
-        }
-
-        const fallbackAngle = (() => {
-          let hash = 0;
-          for (let index = 0; index < point.id.length; index += 1) {
-            hash = ((hash * 31) + point.id.charCodeAt(index)) % 360;
-          }
-          return (hash * Math.PI) / 180;
-        })();
-        const angle = distanceFromStar > 0
-          ? Math.atan2(deltaY, deltaX)
-          : fallbackAngle;
-
-        point.plot_x = clampPlotPosition(
-          starPoint.plot_x + (Math.cos(angle) * minimumStarSeparationPx),
-          viewportWidth,
-        );
-        point.plot_y = clampPlotPosition(
-          starPoint.plot_y + (Math.sin(angle) * minimumStarSeparationPx),
-          viewportHeight,
-        );
-      });
-    }
+      })
+      .sort((left, right) => left.depth - right.depth);
 
     const rings: Array<{
       id: string;
@@ -4535,7 +5273,6 @@ export default function Home() {
               return;
             }
 
-            const depthNorm = (plottedPlanetPoint.depth - minDepth) / depthSpan;
             const leftX = plottedStarPoint.plot_x - orbitRadiusPx;
             const rightX = plottedStarPoint.plot_x + orbitRadiusPx;
             const centerY = plottedStarPoint.plot_y;
@@ -4543,7 +5280,7 @@ export default function Home() {
             rings.push({
               id: `orbit-${contact.id}`,
               path: `M${leftX.toFixed(2)} ${centerY.toFixed(2)} A${orbitRadiusPx.toFixed(2)} ${orbitRadiusPx.toFixed(2)} 0 1 0 ${rightX.toFixed(2)} ${centerY.toFixed(2)} A${orbitRadiusPx.toFixed(2)} ${orbitRadiusPx.toFixed(2)} 0 1 0 ${leftX.toFixed(2)} ${centerY.toFixed(2)}`,
-              opacity: 0.35 + (Math.max(0, Math.min(1, depthNorm)) * 0.4),
+              opacity: 0.5,
             });
           });
       }
@@ -4554,6 +5291,7 @@ export default function Home() {
       height: viewportHeight,
       rings,
       points,
+      renderZoom: effectiveZoom,
     };
   }, [
     localChartData,
@@ -4561,34 +5299,9 @@ export default function Home() {
     activeSystemTargetContactId,
     localChartView.center_x,
     localChartView.center_z,
-    localChartView.pitch_deg,
-    localChartView.scale_mode,
-    localChartView.yaw_deg,
     localChartView.zoom,
     scannerSelectedContactId,
   ]);
-
-  const systemChart3DContacts = useMemo(
-    () => visibleLocalChartContacts.map((contact) => {
-      const visual = resolveChartPointVisual(
-        contact.body_kind === "station"
-          ? "planet"
-          : (contact.body_kind === "ship" ? "moon" : contact.body_kind),
-        contact.body_type,
-        contact.radius_km,
-      );
-      return {
-        id: contact.id,
-        contact_type: contact.contact_type,
-        chart_x: contact.chart_x,
-        chart_y: contact.chart_y,
-        chart_z: contact.chart_z,
-        radius_km: contact.radius_km,
-        color: visual.color,
-      };
-    }),
-    [visibleLocalChartContacts],
-  );
 
   const selectedCommsChannel = useMemo(
     () => commsChannels.find((channel) => channel.id === commsSelectedChannelId) ?? null,
@@ -4601,8 +5314,14 @@ export default function Home() {
         return "TRADE";
       case "flight":
         return "FLIGHT";
+      case "navigation":
+        return navigationView === "system"
+          ? "NAVIGATION · SYSTEM"
+          : "NAVIGATION · GALAXY";
       case "system":
         return "SYSTEM";
+      case "galaxy":
+        return "GALAXY";
       case "ship":
         return "SHIP";
       case "story":
@@ -4612,7 +5331,7 @@ export default function Home() {
       default:
         return "FLIGHT";
     }
-  }, [activeMode]);
+  }, [activeMode, navigationView]);
 
   const formatCommsChannelName = useCallback((channel: CommsChannel | null): string => {
     if (!channel) {
@@ -4793,6 +5512,21 @@ export default function Home() {
   )
     ? "none"
     : flightImpactFlash;
+  const effectiveFlightJumpCompletionVfx: "none" | "flash" | "stabilize" | "reduced" = (
+    isDockingApproachActive
+    || isFlightTransitActive
+    || flightJumpPhase === FLIGHT_PHASE.DOCKING_APPROACH
+  )
+    ? "none"
+    : flightJumpCompletionVfx;
+  const hyperspaceJumpCinematicActive = (
+    flightJumpVisualMode === "hyperspace"
+    && flightJumpPhase === FLIGHT_PHASE.JUMPING
+  );
+  const hyperspaceJumpExitFlashActive = (
+    flightJumpVisualMode === "hyperspace"
+    && (effectiveFlightJumpCompletionVfx === "flash" || effectiveFlightJumpCompletionVfx === "reduced")
+  );
 
   const useFlightShell = true;
 
@@ -4962,15 +5696,102 @@ export default function Home() {
     if (!flightDestinationLockedContactId) {
       return null;
     }
+
+    const isLocalContact = scannerContacts.some(
+      (contact) => contact.id === flightDestinationLockedContactId,
+    );
+    if (!isLocalContact) {
+      return null;
+    }
+
     const parsedContact = parseLocalTargetContactId(flightDestinationLockedContactId);
-    if (!parsedContact || parsedContact.contactType === "station") {
+    if (!parsedContact) {
       return null;
     }
     return flightDestinationLockedContactId;
-  }, [flightDestinationLockedContactId, flightLocalWaypointContactId]);
+  }, [flightDestinationLockedContactId, flightLocalWaypointContactId, scannerContacts]);
+
+  const nearestHyperspaceClearanceContact = useMemo(() => {
+    const clearanceContacts = scannerContacts.filter((contact) => (
+      contact.contact_type === "station"
+      || contact.contact_type === "planet"
+      || contact.contact_type === "moon"
+      || contact.contact_type === "star"
+    ));
+    if (!clearanceContacts.length) {
+      return null;
+    }
+
+    return clearanceContacts.reduce((nearest, contact) => (
+      contact.distance_km < nearest.distance_km ? contact : nearest
+    ));
+  }, [scannerContacts]);
+
+  const nearestHyperspaceClearanceDistanceKm =
+    nearestHyperspaceClearanceContact?.distance_km ?? null;
+  const isOutsideHyperspaceClearance = (
+    nearestHyperspaceClearanceDistanceKm === null
+    || nearestHyperspaceClearanceDistanceKm >= HYPERSPACE_INITIATION_MIN_CLEARANCE_KM
+  );
+  const hasLockedHyperspaceTarget = flightDestinationLockedId !== null;
+
+  const galaxyJumpDisabledReason = useMemo(() => {
+    if (shipOpsLoading) {
+      return "Ship operation in progress.";
+    }
+    if (shipTelemetry?.status !== "in-space") {
+      return "Undock before initiating jump.";
+    }
+    if (isFlightTransitActive) {
+      return "Docking/undocking transit in progress.";
+    }
+    if (isDockingApproachActive) {
+      return "Docking approach in progress.";
+    }
+    if (flightJumpPhase === FLIGHT_PHASE.CHARGING) {
+      return "Jump charge already in progress.";
+    }
+    if (flightJumpPhase === FLIGHT_PHASE.JUMPING) {
+      return "Jump execution already in progress.";
+    }
+    if (flightJumpCooldownSeconds > 0) {
+      return jumpCooldownTooltipLabel || `Jump cooldown active (${flightJumpCooldownSeconds}s).`;
+    }
+    if ((shipTelemetry?.fuel_current ?? 0) < JUMP_FUEL_COST) {
+      return `Insufficient fuel for jump (${shipTelemetry?.fuel_current ?? 0}/${JUMP_FUEL_COST}).`;
+    }
+    if (!hasLockedHyperspaceTarget) {
+      return "Lock hyperspace target before initiating jump.";
+    }
+    if (!isOutsideHyperspaceClearance) {
+      const nearestName = nearestHyperspaceClearanceContact?.name ?? "local body";
+      const nearestType = nearestHyperspaceClearanceContact?.contact_type ?? "contact";
+      const nearestDistanceKm = Math.max(0, Math.round(nearestHyperspaceClearanceDistanceKm ?? 0));
+      return (
+        `Increase clearance to ${HYPERSPACE_INITIATION_MIN_CLEARANCE_KM}km `
+        + `(nearest ${nearestType} ${nearestName} at ${nearestDistanceKm}km).`
+      );
+    }
+    return "";
+  }, [
+    flightJumpCooldownSeconds,
+    flightJumpPhase,
+    hasLockedHyperspaceTarget,
+    isDockingApproachActive,
+    isFlightTransitActive,
+    isOutsideHyperspaceClearance,
+    jumpCooldownTooltipLabel,
+    nearestHyperspaceClearanceContact?.contact_type,
+    nearestHyperspaceClearanceContact?.name,
+    nearestHyperspaceClearanceDistanceKm,
+    shipTelemetry?.fuel_current,
+    shipTelemetry?.status,
+    shipOpsLoading,
+  ]);
+
+  const isGalaxyJumpDisabled = galaxyJumpDisabledReason.length > 0;
 
   const jumpDisabledReason = useMemo(() => {
-    const hasStationJumpWaypoint = flightDestinationLockedId !== null;
     const hasLocalTransferWaypoint = localTransferJumpTargetContactId !== null;
 
     if (shipOpsLoading) {
@@ -4988,29 +5809,19 @@ export default function Home() {
     if (flightJumpPhase === FLIGHT_PHASE.JUMPING) {
       return "Jump execution already in progress.";
     }
-    if (!hasStationJumpWaypoint && !hasLocalTransferWaypoint) {
-      return "Lock a waypoint before initiating jump.";
-    }
-    if (hasStationJumpWaypoint && flightJumpCooldownSeconds > 0) {
-      return jumpCooldownTooltipLabel || `Jump cooldown active (${flightJumpCooldownSeconds}s).`;
+    if (!hasLocalTransferWaypoint) {
+      return "Lock a system waypoint before initiating jump.";
     }
     if (shipTelemetry?.status !== "in-space") {
       return "Undock before initiating jump.";
     }
-    if (hasStationJumpWaypoint && (shipTelemetry?.fuel_current ?? 0) < JUMP_FUEL_COST) {
-      return `Insufficient fuel for jump (${shipTelemetry?.fuel_current ?? 0}/${JUMP_FUEL_COST}).`;
-    }
     return "";
   }, [
     localTransferJumpTargetContactId,
-    flightDestinationLockedId,
-    flightJumpCooldownSeconds,
     flightJumpPhase,
     isFlightTransitActive,
     isDockingApproachActive,
-    jumpCooldownTooltipLabel,
     shipOpsLoading,
-    shipTelemetry?.fuel_current,
     shipTelemetry?.status,
   ]);
 
@@ -5374,6 +6185,7 @@ export default function Home() {
       stationIdOverride?: number;
       systemIdOverride?: number;
       localApproach?: boolean;
+      refuelAmountOverride?: number;
     },
   ): Promise<boolean> => {
     if (!token) {
@@ -5404,7 +6216,7 @@ export default function Home() {
         operation === "dock"
           ? { station_id: options?.stationIdOverride ?? Number(dockStationId) }
           : operation === "refuel"
-            ? { amount: Number(refuelAmount) }
+            ? { amount: options?.refuelAmountOverride ?? Number(refuelAmount) }
             : operation === "jump"
               ? {
                 destination_station_id: options?.stationIdOverride ?? Number(dockStationId),
@@ -5475,6 +6287,29 @@ export default function Home() {
     token,
   ]);
 
+  const handleRefuelToFull = useCallback(async (): Promise<void> => {
+    if (!shipTelemetry) {
+      setShipOpsStatus("Ship telemetry is unavailable.");
+      return;
+    }
+
+    const refuelToFullAmount = Math.max(
+      0,
+      Math.ceil(shipTelemetry.fuel_cap - shipTelemetry.fuel_current),
+    );
+
+    if (refuelToFullAmount <= 0) {
+      setShipOpsStatus("Fuel is already at capacity.");
+      showToast({ message: "Fuel is already at capacity.", variant: "success" });
+      return;
+    }
+
+    setRefuelAmount(String(refuelToFullAmount));
+    await handleShipOperation("refuel", {
+      refuelAmountOverride: refuelToFullAmount,
+    });
+  }, [handleShipOperation, shipTelemetry, showToast]);
+
   const selectedScannerContact = useMemo(
     () => scannerContacts.find((contact) => contact.id === scannerSelectedContactId) ?? null,
     [scannerContacts, scannerSelectedContactId],
@@ -5522,6 +6357,44 @@ export default function Home() {
     });
     return map;
   }, [scannerLiveContacts]);
+
+  const liveStationAnchoredShipPosition = useMemo(() => {
+    if (!localChartData?.stations?.length) {
+      return null;
+    }
+
+    const scannerContactById = new Map(
+      scannerContacts.map((contact) => [contact.id, contact]),
+    );
+    const stationById = new Map(
+      localChartData.stations.map((station) => [station.id, station]),
+    );
+
+    for (const liveContact of scannerLiveContacts) {
+      const scannerContact = scannerContactById.get(liveContact.id);
+      if (!scannerContact || scannerContact.contact_type !== "station") {
+        continue;
+      }
+
+      const stationId = parseStationContactId(scannerContact.id);
+      if (!stationId) {
+        continue;
+      }
+
+      const station = stationById.get(stationId);
+      if (!station) {
+        continue;
+      }
+
+      return {
+        x: station.position_x - (liveContact.relative_x * STATION_SCENE_TO_WORLD_SCALE_XZ),
+        y: station.position_y - (liveContact.relative_y * STATION_SCENE_TO_WORLD_SCALE_Y),
+        z: station.position_z - (liveContact.relative_z * STATION_SCENE_TO_WORLD_SCALE_XZ),
+      };
+    }
+
+    return null;
+  }, [localChartData?.stations, scannerContacts, scannerLiveContacts]);
 
   const activeDockTargetLiveContact = useMemo(() => {
     if (!activeDockTargetContact) {
@@ -5668,9 +6541,10 @@ export default function Home() {
       const live = scannerLiveContactMap.get(contact.id);
       const isInView = live?.in_view ?? true;
 
-      const effectiveDistanceKm = Number.isFinite(live?.distance)
-        ? Math.max(0, Number(live?.distance))
-        : Math.max(0, contact.distance_km);
+      const effectiveDistanceKm = resolveScannerDisplayDistanceKm(
+        contact.distance_km,
+        live?.distance,
+      );
       const isBeyondScannerRange = effectiveDistanceKm > scannerRangeKm;
 
       const fallbackPlaneX = Math.max(-1, Math.min(1, contact.scene_x / scannerPlaneRangeKm));
@@ -5721,7 +6595,7 @@ export default function Home() {
         if (live && isInView) {
           const normalizedDistance = Math.max(0, Math.min(
             1,
-            (contact.distance_km - SCANNER_DISTANCE_NEAR_KM)
+            (effectiveDistanceKm - SCANNER_DISTANCE_NEAR_KM)
             / (SCANNER_DISTANCE_FAR_KM - SCANNER_DISTANCE_NEAR_KM),
           ));
           const distanceDepthFactor = Math.sqrt(normalizedDistance);
@@ -5877,7 +6751,11 @@ export default function Home() {
     updateLocalTargetIntent,
   ]);
 
-  const handleFlightJumpSequence = useCallback(async () => {
+  const handleFlightJumpSequence = useCallback(async (
+    options?: { jumpMode?: "system" | "hyperspace" },
+  ) => {
+    const jumpMode = options?.jumpMode ?? "system";
+
     if (isDockingApproachActive) {
       setFlightJumpPhase(FLIGHT_PHASE.ERROR);
       setShipOpsStatus("Docking approach in progress. Wait before initiating jump.");
@@ -5888,16 +6766,26 @@ export default function Home() {
       return;
     }
 
-    const stationJumpTargetId = flightDestinationLockedId;
-    const localTransferTargetContactId = localTransferJumpTargetContactId;
+    const stationJumpTargetId = jumpMode === "hyperspace"
+      ? flightDestinationLockedId
+      : null;
+    const localTransferTargetContactId = jumpMode === "system"
+      ? localTransferJumpTargetContactId
+      : null;
 
-    if (!stationJumpTargetId && !localTransferTargetContactId) {
+    if (jumpMode === "system" && !localTransferTargetContactId) {
       setFlightJumpPhase(FLIGHT_PHASE.ERROR);
-      setShipOpsStatus("Lock a waypoint before initiating jump.");
+      setShipOpsStatus("Lock a system waypoint before initiating jump.");
       return;
     }
 
-    if (stationJumpTargetId && flightJumpCooldownSeconds > 0) {
+    if (jumpMode === "hyperspace" && !stationJumpTargetId) {
+      setFlightJumpPhase(FLIGHT_PHASE.ERROR);
+      setShipOpsStatus("Lock hyperspace target before initiating jump.");
+      return;
+    }
+
+    if (jumpMode === "hyperspace" && flightJumpCooldownSeconds > 0) {
       setFlightJumpPhase(FLIGHT_PHASE.ERROR);
       setShipOpsStatus(`Jump cooldown active (${flightJumpCooldownSeconds}s remaining).`);
       return;
@@ -5909,36 +6797,64 @@ export default function Home() {
       return;
     }
 
-    if (stationJumpTargetId && (shipTelemetry?.fuel_current ?? 0) < JUMP_FUEL_COST) {
+    if (jumpMode === "hyperspace" && (shipTelemetry?.fuel_current ?? 0) < JUMP_FUEL_COST) {
       setFlightJumpPhase(FLIGHT_PHASE.ERROR);
       setShipOpsStatus(`Insufficient fuel for jump (${shipTelemetry?.fuel_current ?? 0}/${JUMP_FUEL_COST}).`);
       return;
     }
 
+    setFlightJumpVisualMode(jumpMode === "hyperspace" ? "hyperspace" : "none");
+    if (jumpMode === "hyperspace") {
+      flightJumpPhaseLockUntilRef.current = Date.now() + 10_000;
+    }
+
     setFlightJumpPhase(FLIGHT_PHASE.CHARGING);
+    if (jumpMode === "hyperspace") {
+      dispatchFlightAudioEvent("jump.hyperspace_charge_start", {
+        station_id: stationJumpTargetId,
+        system_id: Number(selectedJumpSystemId),
+      });
+    }
     void persistFlightState(
       FLIGHT_PHASE.CHARGING,
       stationJumpTargetId,
-      flightDestinationLockedContactId,
+      jumpMode === "hyperspace"
+        ? flightDestinationLockedContactId
+        : localTransferTargetContactId,
     );
     setFlightJumpProgress(0);
-    for (let progress = 0; progress <= 60; progress += 15) {
+    const chargeStep = jumpMode === "hyperspace" ? 5 : 10;
+    const chargeSleepMs = jumpMode === "hyperspace" ? 170 : 145;
+    const chargeMax = jumpMode === "hyperspace" ? 70 : 60;
+    for (let progress = 0; progress <= chargeMax; progress += chargeStep) {
       setFlightJumpProgress(progress);
-      await sleep(120);
+      await sleep(chargeSleepMs);
     }
 
     setFlightJumpPhase(FLIGHT_PHASE.JUMPING);
+    if (jumpMode === "hyperspace") {
+      dispatchFlightAudioEvent("jump.hyperspace_transit_peak", {
+        station_id: stationJumpTargetId,
+        system_id: Number(selectedJumpSystemId),
+      });
+    }
     void persistFlightState(
       FLIGHT_PHASE.JUMPING,
       stationJumpTargetId,
-      flightDestinationLockedContactId,
+      jumpMode === "hyperspace"
+        ? flightDestinationLockedContactId
+        : localTransferTargetContactId,
     );
-    for (let progress = 65; progress <= 90; progress += 5) {
+    const jumpStart = jumpMode === "hyperspace" ? 72 : 65;
+    const jumpMax = jumpMode === "hyperspace" ? 96 : 92;
+    const jumpStep = jumpMode === "hyperspace" ? 3 : 3;
+    const jumpSleepMs = jumpMode === "hyperspace" ? 170 : 125;
+    for (let progress = jumpStart; progress <= jumpMax; progress += jumpStep) {
       setFlightJumpProgress(progress);
-      await sleep(90);
+      await sleep(jumpSleepMs);
     }
 
-    if (localTransferTargetContactId) {
+    if (jumpMode === "system" && localTransferTargetContactId) {
       const localTransferTargetName = scannerContacts.find(
         (contact) => contact.id === localTransferTargetContactId,
       )?.name ?? localTransferTargetContactId;
@@ -5947,7 +6863,17 @@ export default function Home() {
         localTransferTargetContactId,
       );
 
+      void fetchScannerContacts({ silent: true });
+      if (scannerSystemId) {
+        void fetchLocalChart(scannerSystemId, { silent: true });
+      }
+      void fetchCommanderProfile();
+
       setFlightJumpPhase(FLIGHT_PHASE.ARRIVED);
+      triggerFlightJumpCompletionEffects({
+        contact_id: localTransferTargetContactId,
+        contact_name: localTransferTargetName,
+      }, { jumpMode: "system" });
       setFlightJumpProgress(100);
       setShipOpsStatus(
         transferTelemetry
@@ -5966,6 +6892,14 @@ export default function Home() {
       return;
     }
 
+    if (!stationJumpTargetId) {
+      flightJumpPhaseLockUntilRef.current = 0;
+      setFlightJumpPhase(FLIGHT_PHASE.ERROR);
+      setShipOpsStatus("Lock hyperspace target before initiating jump.");
+      setFlightJumpProgress(0);
+      return;
+    }
+
     const success = await handleShipOperation("jump", {
       stationIdOverride: stationJumpTargetId,
       systemIdOverride: Number(selectedJumpSystemId),
@@ -5973,30 +6907,41 @@ export default function Home() {
 
     if (success) {
       setFlightJumpPhase(FLIGHT_PHASE.ARRIVED);
+      triggerFlightJumpCompletionEffects({
+        station_id: stationJumpTargetId,
+        system_id: Number(selectedJumpSystemId),
+      }, { jumpMode: "hyperspace" });
       setFlightJumpProgress(100);
+      setFlightDestinationLockedId(null);
+      setFlightDestinationLockedContactId(null);
       setShipOpsStatus(
-        `Jump complete. Arrived in ${jumpTargetSystemLabel}; approach ${jumpTargetStationLabel} and dock to trade.`,
+        `Hyperspace exit complete in ${jumpTargetSystemLabel}. You emerged at safe range; open System map to lock a local waypoint, then jump-transfer toward your destination.`,
       );
       window.setTimeout(() => {
-        setFlightJumpPhase(FLIGHT_PHASE.DESTINATION_LOCKED);
+        flightJumpPhaseLockUntilRef.current = 0;
+        setFlightJumpPhase(FLIGHT_PHASE.IDLE);
         setFlightJumpProgress(0);
         void persistFlightState(
-          FLIGHT_PHASE.DESTINATION_LOCKED,
-          stationJumpTargetId,
-          flightDestinationLockedContactId,
+          FLIGHT_PHASE.IDLE,
+          null,
+          null,
         );
       }, 1200);
       return;
     }
 
     setFlightJumpPhase(FLIGHT_PHASE.ERROR);
+    flightJumpPhaseLockUntilRef.current = 0;
     void persistFlightState(
       FLIGHT_PHASE.ERROR,
       stationJumpTargetId,
-      flightDestinationLockedContactId,
+      jumpMode === "hyperspace"
+        ? flightDestinationLockedContactId
+        : localTransferTargetContactId,
     );
     setFlightJumpProgress(0);
   }, [
+    dispatchFlightAudioEvent,
     flightDestinationLockedId,
     flightDestinationLockedContactId,
     flightJumpCooldownSeconds,
@@ -6004,14 +6949,106 @@ export default function Home() {
     isDockingApproachActive,
     handleShipOperation,
     persistFlightState,
+    fetchCommanderProfile,
+    fetchLocalChart,
+    fetchScannerContacts,
     scannerContacts,
+    scannerSystemId,
     selectedJumpSystemId,
     shipTelemetry?.fuel_current,
     shipTelemetry?.status,
     token,
+    triggerFlightJumpCompletionEffects,
     updateLocalTargetIntent,
-    jumpTargetStationLabel,
     jumpTargetSystemLabel,
+  ]);
+
+  const handleGalaxyInitiateJump = useCallback(() => {
+    if (isGalaxyJumpDisabled) {
+      return;
+    }
+
+    if (shipTelemetry?.status !== "in-space") {
+      const message = "Undock before initiating jump.";
+      setFlightJumpPhase(FLIGHT_PHASE.ERROR);
+      setShipOpsStatus(message);
+      showToast({ message, variant: "warning" });
+      return;
+    }
+
+    if (flightJumpCooldownSeconds > 0) {
+      const message = `Jump cooldown active (${flightJumpCooldownSeconds}s remaining).`;
+      setFlightJumpPhase(FLIGHT_PHASE.ERROR);
+      setShipOpsStatus(message);
+      showToast({ message, variant: "warning" });
+      return;
+    }
+
+    if ((shipTelemetry?.fuel_current ?? 0) < JUMP_FUEL_COST) {
+      const message = (
+        `Insufficient fuel for jump (${shipTelemetry?.fuel_current ?? 0}/${JUMP_FUEL_COST}).`
+      );
+      setFlightJumpPhase(FLIGHT_PHASE.ERROR);
+      setShipOpsStatus(message);
+      showToast({ message, variant: "warning" });
+      return;
+    }
+
+    void handleFlightJumpSequence({ jumpMode: "hyperspace" });
+  }, [
+    flightJumpCooldownSeconds,
+    handleFlightJumpSequence,
+    isGalaxyJumpDisabled,
+    shipTelemetry?.fuel_current,
+    shipTelemetry?.status,
+    showToast,
+  ]);
+
+  const syncShipPositionDuringFlight = useCallback(async (
+    nextPosition: { x: number; y: number; z: number },
+  ): Promise<void> => {
+    if (!token) {
+      return;
+    }
+
+    const parsedShipId = Number(shipId);
+    if (!Number.isInteger(parsedShipId) || parsedShipId <= 0) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE}/api/ships/${parsedShipId}/position-sync`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          position_x: nextPosition.x,
+          position_y: nextPosition.y,
+          position_z: nextPosition.z,
+        }),
+      });
+      if (!response.ok) {
+        return;
+      }
+
+      const data = await response.json();
+      setShipTelemetry(data);
+      flightPositionSyncLastCoordsRef.current = nextPosition;
+
+      const now = Date.now();
+      if (now - flightPositionSyncLastScannerRefreshAtRef.current >= 1500) {
+        flightPositionSyncLastScannerRefreshAtRef.current = now;
+        void fetchScannerContacts({ silent: true });
+      }
+    } catch {
+      return;
+    }
+  }, [
+    fetchScannerContacts,
+    shipId,
+    token,
   ]);
 
   const resetDockingApproachState = useCallback(() => {
@@ -6530,9 +7567,9 @@ export default function Home() {
         }...`,
       );
 
-      for (let progress = 0; progress <= 60; progress += 12) {
+      for (let progress = 0; progress <= 60; progress += 10) {
         setFlightJumpProgress(progress);
-        await sleep(80);
+        await sleep(120);
       }
 
       setFlightJumpPhase(FLIGHT_PHASE.JUMPING);
@@ -6540,14 +7577,19 @@ export default function Home() {
         contact_id: selectedContact.id,
         contact_name: selectedContact.name,
       });
-      for (let progress = 65; progress <= 95; progress += 6) {
+      for (let progress = 65; progress <= 95; progress += 5) {
         setFlightJumpProgress(progress);
-        await sleep(65);
+        await sleep(115);
       }
 
       setFlightJumpPhase(FLIGHT_PHASE.ARRIVED);
       const transferTelemetry = await updateLocalTargetIntent("transfer", selectedContact.id);
-      dispatchFlightAudioEvent("jump.exit", {
+      void fetchScannerContacts({ silent: true });
+      if (scannerSystemId) {
+        void fetchLocalChart(scannerSystemId, { silent: true });
+      }
+      void fetchCommanderProfile();
+      triggerFlightJumpCompletionEffects({
         contact_id: selectedContact.id,
         contact_name: selectedContact.name,
       });
@@ -6587,9 +7629,9 @@ export default function Home() {
     const targetLiveContact = scannerLiveContactMap.get(targetContactId) ?? null;
     const targetScannerContact = scannerContacts.find((contact) => contact.id === targetContactId) ?? null;
     const targetDistanceKm = Number.isFinite(targetLiveContact?.distance)
-      ? Math.max(0, targetLiveContact.distance)
+      ? Math.max(0, targetLiveContact?.distance ?? 0)
       : Number.isFinite(targetScannerContact?.distance_km)
-        ? Math.max(0, targetScannerContact.distance_km)
+        ? Math.max(0, targetScannerContact?.distance_km ?? 0)
         : null;
     const dockingRangeKm = shipTelemetry?.docking_computer_range_km ?? null;
 
@@ -6611,18 +7653,18 @@ export default function Home() {
         `Target out of docking range (${targetDistanceKm.toFixed(1)}km > ${dockingRangeKm.toFixed(1)}km). Executing jump approach...`,
       );
 
-      for (let progress = 0; progress <= 60; progress += 12) {
+      for (let progress = 0; progress <= 60; progress += 10) {
         setFlightJumpProgress(progress);
-        await sleep(80);
+        await sleep(120);
       }
 
       setFlightJumpPhase(FLIGHT_PHASE.JUMPING);
       dispatchFlightAudioEvent("jump.transit_peak", {
         station_id: selectedStationId,
       });
-      for (let progress = 65; progress <= 95; progress += 6) {
+      for (let progress = 65; progress <= 95; progress += 5) {
         setFlightJumpProgress(progress);
-        await sleep(65);
+        await sleep(115);
       }
 
       const jumpSuccess = await handleShipOperation("jump", {
@@ -6636,7 +7678,7 @@ export default function Home() {
       }
 
       setFlightJumpPhase(FLIGHT_PHASE.ARRIVED);
-      dispatchFlightAudioEvent("jump.exit", {
+      triggerFlightJumpCompletionEffects({
         station_id: selectedStationId,
       });
       setFlightJumpProgress(100);
@@ -6651,12 +7693,16 @@ export default function Home() {
     await handleDockCommand(selectedStationId);
   }, [
     dispatchFlightAudioEvent,
+    triggerFlightJumpCompletionEffects,
     handleDockCommand,
     handleShipOperation,
     flightDestinationLockedId,
     isDockingApproachActive,
     persistFlightState,
     updateLocalTargetIntent,
+    fetchCommanderProfile,
+    fetchLocalChart,
+    fetchScannerContacts,
     scannerLiveContactMap,
     scannerContacts,
     scannerSystemId,
@@ -6699,7 +7745,14 @@ export default function Home() {
   }, [selectedSystemChartRawContact]);
 
   const handleSystemChartPointerDown = useCallback((event: ReactPointerEvent<SVGSVGElement>): void => {
-    const panMode = event.shiftKey;
+    const eventTarget = event.target;
+    if (
+      eventTarget instanceof Element
+      && eventTarget.closest('[data-testid^="system-chart-point-"]')
+    ) {
+      return;
+    }
+
     systemChartDragStateRef.current = {
       active: true,
       pointerId: event.pointerId,
@@ -6709,7 +7762,7 @@ export default function Home() {
       startPitch: localChartView.pitch_deg,
       startCenterX: localChartView.center_x,
       startCenterZ: localChartView.center_z,
-      panMode,
+      panMode: true,
     };
     if (typeof event.currentTarget.setPointerCapture === "function") {
       event.currentTarget.setPointerCapture(event.pointerId);
@@ -6725,20 +7778,11 @@ export default function Home() {
     const deltaX = event.clientX - dragState.startX;
     const deltaY = event.clientY - dragState.startY;
 
-    if (dragState.panMode) {
-      const panScale = Math.max(1, 220 / Math.max(0.1, localChartView.zoom));
-      setLocalChartView((current) => ({
-        ...current,
-        center_x: roundLocalChartControlValue(dragState.startCenterX - (deltaX * panScale)),
-        center_z: roundLocalChartControlValue(dragState.startCenterZ + (deltaY * panScale)),
-      }));
-      return;
-    }
-
+    const panScale = 1 / clampLocalChartZoom(localChartView.zoom);
     setLocalChartView((current) => ({
       ...current,
-      yaw_deg: roundLocalChartControlValue(Math.max(-180, Math.min(180, dragState.startYaw + (deltaX * 0.35)))),
-      pitch_deg: roundLocalChartControlValue(Math.max(-75, Math.min(75, dragState.startPitch + (deltaY * 0.25)))),
+      center_x: roundLocalChartControlValue(dragState.startCenterX - (deltaX * panScale)),
+      center_z: roundLocalChartControlValue(dragState.startCenterZ + (deltaY * panScale)),
     }));
   }, [localChartView.zoom]);
 
@@ -6762,7 +7806,7 @@ export default function Home() {
     const zoomDelta = event.deltaY < 0 ? 1.12 : 0.9;
     setLocalChartView((current) => ({
       ...current,
-      zoom: roundLocalChartControlValue(Math.max(0.1, Math.min(20, current.zoom * zoomDelta))),
+      zoom: roundLocalChartControlValue(clampLocalChartZoom(current.zoom * zoomDelta)),
     }));
   }, []);
 
@@ -6774,7 +7818,8 @@ export default function Home() {
       event.preventDefault();
       localChartViewInteractedRef.current = true;
       setLocalChartView((current) => {
-        const panStep = Math.max(18, 320 / Math.max(0.1, current.zoom));
+        const panStep = LOCAL_CHART_BUTTON_PAN_PIXELS
+          / clampLocalChartZoom(current.zoom);
         return {
           ...current,
           center_x: roundLocalChartControlValue(key === "ArrowLeft"
@@ -6792,52 +7837,12 @@ export default function Home() {
       return true;
     }
 
-    if (key === "[") {
-      event.preventDefault();
-      localChartViewInteractedRef.current = true;
-      setLocalChartView((current) => ({
-        ...current,
-        yaw_deg: roundLocalChartControlValue(Math.max(-180, Math.min(180, current.yaw_deg - 5))),
-      }));
-      return true;
-    }
-
-    if (key === "]") {
-      event.preventDefault();
-      localChartViewInteractedRef.current = true;
-      setLocalChartView((current) => ({
-        ...current,
-        yaw_deg: roundLocalChartControlValue(Math.max(-180, Math.min(180, current.yaw_deg + 5))),
-      }));
-      return true;
-    }
-
-    if (key === ";") {
-      event.preventDefault();
-      localChartViewInteractedRef.current = true;
-      setLocalChartView((current) => ({
-        ...current,
-        pitch_deg: roundLocalChartControlValue(Math.max(-75, Math.min(75, current.pitch_deg - 3))),
-      }));
-      return true;
-    }
-
-    if (key === "'") {
-      event.preventDefault();
-      localChartViewInteractedRef.current = true;
-      setLocalChartView((current) => ({
-        ...current,
-        pitch_deg: roundLocalChartControlValue(Math.max(-75, Math.min(75, current.pitch_deg + 3))),
-      }));
-      return true;
-    }
-
     if (key === "," || key === "-" || key === "_" || code === "NumpadSubtract") {
       event.preventDefault();
       localChartViewInteractedRef.current = true;
       setLocalChartView((current) => ({
         ...current,
-        zoom: roundLocalChartControlValue(Math.max(0.1, Math.min(20, current.zoom * 0.9))),
+        zoom: roundLocalChartControlValue(clampLocalChartZoom(current.zoom * 0.9)),
       }));
       return true;
     }
@@ -6847,7 +7852,7 @@ export default function Home() {
       localChartViewInteractedRef.current = true;
       setLocalChartView((current) => ({
         ...current,
-        zoom: roundLocalChartControlValue(Math.max(0.1, Math.min(20, current.zoom * 1.1))),
+        zoom: roundLocalChartControlValue(clampLocalChartZoom(current.zoom * 1.1)),
       }));
       return true;
     }
@@ -6906,54 +7911,34 @@ export default function Home() {
   }, [systemChartPlot.points]);
 
   useEffect(() => {
-    if (localChartZoomInputFocused) {
-      return;
+    if (!isSystemModeActive) {
+      autoFittedLocalChartSystemIdRef.current = null;
     }
-    setLocalChartZoomInput(formatChartZoomInputValue(localChartView.zoom));
-  }, [localChartView.zoom, localChartZoomInputFocused]);
+  }, [isSystemModeActive]);
 
   useEffect(() => {
     if (
-      activeMode !== "system"
-      || localChartViewHasStoredPreference
+      !isSystemModeActive
       || !localChartData
-      || localChartViewInteractedRef.current
     ) {
       return;
     }
 
     const systemId = localChartData.system.id;
-    if (autoFittedLocalChartSystemIdsRef.current.has(systemId)) {
+    if (autoFittedLocalChartSystemIdRef.current === systemId) {
       return;
     }
 
-    const isPristineLocalChartView =
-      localChartView.zoom === DEFAULT_LOCAL_CHART_VIEW.zoom
-      && localChartView.center_x === DEFAULT_LOCAL_CHART_VIEW.center_x
-      && localChartView.center_z === DEFAULT_LOCAL_CHART_VIEW.center_z
-      && localChartView.yaw_deg === DEFAULT_LOCAL_CHART_VIEW.yaw_deg
-      && localChartView.pitch_deg === DEFAULT_LOCAL_CHART_VIEW.pitch_deg;
-    if (!isPristineLocalChartView) {
-      return;
-    }
-
-    autoFittedLocalChartSystemIdsRef.current.add(systemId);
-    setLocalChartZoomInputFocused(false);
+    autoFittedLocalChartSystemIdRef.current = systemId;
+    localChartViewInteractedRef.current = false;
     setLocalChartView((current) => ({
       ...fittedDefaultLocalChartView,
       scale_mode: current.scale_mode,
     }));
-    setLocalChartZoomInput(formatChartZoomInputValue(fittedDefaultLocalChartView.zoom));
   }, [
-    activeMode,
     fittedDefaultLocalChartView,
+    isSystemModeActive,
     localChartData,
-    localChartView.center_x,
-    localChartView.center_z,
-    localChartView.pitch_deg,
-    localChartViewHasStoredPreference,
-    localChartView.yaw_deg,
-    localChartView.zoom,
   ]);
 
   useEffect(() => {
@@ -7026,7 +8011,7 @@ export default function Home() {
   const handleFlightSceneCollision = useCallback(async (
     collision: {
       contactId: string;
-      contactType: "ship" | "station" | "planet" | "star";
+      contactType: "ship" | "station" | "planet" | "star" | "moon";
       contactName: string;
       distance: number;
       speed: number;
@@ -7167,6 +8152,18 @@ export default function Home() {
       window.clearTimeout(flightImpactFlashTimeoutRef.current);
       flightImpactFlashTimeoutRef.current = null;
     }
+    if (flightJumpCompletionVfxTimeoutRef.current !== null) {
+      window.clearTimeout(flightJumpCompletionVfxTimeoutRef.current);
+      flightJumpCompletionVfxTimeoutRef.current = null;
+    }
+    if (flightJumpCompletionClearTimeoutRef.current !== null) {
+      window.clearTimeout(flightJumpCompletionClearTimeoutRef.current);
+      flightJumpCompletionClearTimeoutRef.current = null;
+    }
+    if (flightJumpStabilizeAudioTimeoutRef.current !== null) {
+      window.clearTimeout(flightJumpStabilizeAudioTimeoutRef.current);
+      flightJumpStabilizeAudioTimeoutRef.current = null;
+    }
   }, []);
 
   useEffect(() => {
@@ -7265,6 +8262,13 @@ export default function Home() {
 
   useEffect(() => {
     window.localStorage.setItem(
+      FLIGHT_AUDIO_ENGINE_STORAGE_KEY,
+      flightAudioEngine,
+    );
+  }, [flightAudioEngine]);
+
+  useEffect(() => {
+    window.localStorage.setItem(
       FLIGHT_REDUCED_AUDIO_STORAGE_KEY,
       String(reducedAudioPreferenceEnabled),
     );
@@ -7300,6 +8304,56 @@ export default function Home() {
   }, [fetchLocalChart, scannerSystemId, token]);
 
   useEffect(() => {
+    if (!token) {
+      setGalaxySystems([]);
+      setGalaxySystemsError(null);
+      setSelectedGalaxySystemId("");
+      return;
+    }
+
+    if (!isGalaxyModeActive) {
+      return;
+    }
+
+    void fetchGalaxySystems({ silent: true });
+  }, [fetchGalaxySystems, isGalaxyModeActive, token]);
+
+  useEffect(() => {
+    if (!isGalaxyModeActive) {
+      return;
+    }
+
+    if (!selectedGalaxySystemId) {
+      setGalaxySystemOverview(null);
+      setGalaxySystemOverviewError(null);
+      return;
+    }
+
+    const parsedSystemId = Number(selectedGalaxySystemId);
+    if (!Number.isInteger(parsedSystemId) || parsedSystemId <= 0) {
+      setGalaxySystemOverview(null);
+      setGalaxySystemOverviewError("System ID must be a valid positive number.");
+      return;
+    }
+
+    void fetchGalaxySystemOverview(parsedSystemId, { silent: true });
+  }, [fetchGalaxySystemOverview, isGalaxyModeActive, selectedGalaxySystemId]);
+
+  useEffect(() => {
+    if (!isGalaxyModeActive) {
+      return;
+    }
+
+    if (!selectedGalaxySystemId) {
+      return;
+    }
+    if (selectedJumpSystemId === selectedGalaxySystemId) {
+      return;
+    }
+    setSelectedJumpSystemId(selectedGalaxySystemId);
+  }, [isGalaxyModeActive, selectedGalaxySystemId, selectedJumpSystemId]);
+
+  useEffect(() => {
     if (typeof window === "undefined") {
       return;
     }
@@ -7315,7 +8369,8 @@ export default function Home() {
         typeof detail.timestamp === "string" && detail.timestamp
           ? detail.timestamp
           : new Date().toISOString();
-      const eventSource = detail.source ?? "system";
+      const eventSource: SystemChartObservabilityEventLogEntry["source"] =
+        detail.source ?? "system";
       const eventOutcome: "success" | "failure" | "info" =
         detail.success === true ? "success" : detail.success === false ? "failure" : "info";
       const eventMessage = detail.event === "selection-sync"
@@ -7419,7 +8474,7 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (activeMode !== "system") {
+    if (!isSystemModeActive) {
       return;
     }
 
@@ -7442,10 +8497,6 @@ export default function Home() {
         && event.key !== "3"
         && event.key !== "4"
         && event.key !== "Enter"
-        && event.key !== "["
-        && event.key !== "]"
-        && event.key !== ";"
-        && event.key !== "'"
         && event.key !== ","
         && event.key !== "."
         && event.key !== "-"
@@ -7561,7 +8612,6 @@ export default function Home() {
       window.removeEventListener("keydown", handleSystemChartKeyNav);
     };
   }, [
-    activeMode,
     handleSystemChartSelectContact,
     handleSystemChartApproach,
     handleSystemChartCycleStationTarget,
@@ -7569,12 +8619,13 @@ export default function Home() {
     handleSystemChartKeyboardCamera,
     handleSystemChartWaypointToggle,
     handleLocalChartSortToggle,
+    isSystemModeActive,
     scannerSelectedContactId,
     visibleLocalChartContacts,
   ]);
 
   useEffect(() => {
-    if (activeMode !== "system" || !scannerSelectedContactId) {
+    if (!isSystemModeActive || !scannerSelectedContactId) {
       return;
     }
 
@@ -7584,14 +8635,14 @@ export default function Home() {
     }
 
     rowElement.scrollIntoView({ block: "nearest" });
-  }, [activeMode, scannerSelectedContactId, visibleLocalChartContacts]);
+  }, [isSystemModeActive, scannerSelectedContactId, visibleLocalChartContacts]);
 
   useEffect(() => {
-    if (activeMode !== "system" || !scannerSelectedContactId) {
+    if (!isSystemModeActive || !scannerSelectedContactId) {
       return;
     }
 
-    const activeElement = document.activeElement as HTMLElement | null;
+    const activeElement = document.activeElement as Element | null;
     if (!activeElement) {
       return;
     }
@@ -7610,7 +8661,56 @@ export default function Home() {
     }
 
     selectedPointElement.focus();
-  }, [activeMode, scannerSelectedContactId, systemChartPlot.points]);
+  }, [isSystemModeActive, scannerSelectedContactId, systemChartPlot.points]);
+
+  useEffect(() => {
+    if (!isNavigationMode) {
+      return;
+    }
+
+    const onNavigationViewShortcut = (event: KeyboardEvent): void => {
+      if (event.metaKey || event.ctrlKey || event.altKey) {
+        return;
+      }
+
+      const target = event.target as HTMLElement | null;
+      if (target) {
+        const tagName = target.tagName;
+        const isTypingElement = (
+          tagName === "INPUT"
+          || tagName === "TEXTAREA"
+          || tagName === "SELECT"
+          || target.isContentEditable
+        );
+        if (isTypingElement) {
+          return;
+        }
+      }
+
+      const key = event.key.toLowerCase();
+      if (key === "g") {
+        event.preventDefault();
+        setNavigationView("galaxy");
+        return;
+      }
+
+      if (key === "s") {
+        event.preventDefault();
+        setNavigationView("system");
+        return;
+      }
+
+      if (event.key === "Tab") {
+        event.preventDefault();
+        setNavigationView((current) => (current === "system" ? "galaxy" : "system"));
+      }
+    };
+
+    window.addEventListener("keydown", onNavigationViewShortcut);
+    return () => {
+      window.removeEventListener("keydown", onNavigationViewShortcut);
+    };
+  }, [isNavigationMode]);
 
   useEffect(() => {
     void fetchMarketSummary();
@@ -7725,6 +8825,63 @@ export default function Home() {
   }, [activeMode, dockedAtStation, token]);
 
   useEffect(() => {
+    if (!token || shipTelemetry?.status !== "in-space") {
+      flightPositionSyncLastCoordsRef.current = null;
+      return;
+    }
+    const jumpPhaseIsStable = (
+      flightJumpPhase === FLIGHT_PHASE.IDLE
+      || flightJumpPhase === FLIGHT_PHASE.DESTINATION_LOCKED
+      || flightJumpPhase === FLIGHT_PHASE.ARRIVED
+      || flightJumpPhase === FLIGHT_PHASE.ERROR
+    );
+    if (!jumpPhaseIsStable) {
+      return;
+    }
+    if (isFlightTransitActive || isDockingApproachActive || !liveStationAnchoredShipPosition) {
+      return;
+    }
+
+    const roundedPosition = {
+      x: Math.round(liveStationAnchoredShipPosition.x),
+      y: Math.round(liveStationAnchoredShipPosition.y),
+      z: Math.round(liveStationAnchoredShipPosition.z),
+    };
+    const lastPosition = flightPositionSyncLastCoordsRef.current;
+    const movedEnough = (
+      lastPosition === null
+      || Math.abs(roundedPosition.x - lastPosition.x) >= 2
+      || Math.abs(roundedPosition.y - lastPosition.y) >= 2
+      || Math.abs(roundedPosition.z - lastPosition.z) >= 2
+    );
+    if (!movedEnough) {
+      return;
+    }
+
+    const now = Date.now();
+    if (now - flightPositionSyncLastSentAtRef.current < 900) {
+      return;
+    }
+    if (flightPositionSyncInFlightRef.current) {
+      return;
+    }
+
+    flightPositionSyncInFlightRef.current = true;
+    flightPositionSyncLastSentAtRef.current = now;
+    void syncShipPositionDuringFlight(roundedPosition).finally(() => {
+      flightPositionSyncInFlightRef.current = false;
+    });
+  }, [
+    flightJumpPhase,
+    isDockingApproachActive,
+    isFlightTransitActive,
+    liveStationAnchoredShipPosition,
+    shipTelemetry?.status,
+    syncShipPositionDuringFlight,
+    token,
+  ]);
+
+  useEffect(() => {
     if (!dockedAtStation) {
       return;
     }
@@ -7741,9 +8898,22 @@ export default function Home() {
       return;
     }
     setFlightImpactFlash("none");
+    setFlightJumpCompletionVfx("none");
     if (flightImpactFlashTimeoutRef.current !== null) {
       window.clearTimeout(flightImpactFlashTimeoutRef.current);
       flightImpactFlashTimeoutRef.current = null;
+    }
+    if (flightJumpCompletionVfxTimeoutRef.current !== null) {
+      window.clearTimeout(flightJumpCompletionVfxTimeoutRef.current);
+      flightJumpCompletionVfxTimeoutRef.current = null;
+    }
+    if (flightJumpCompletionClearTimeoutRef.current !== null) {
+      window.clearTimeout(flightJumpCompletionClearTimeoutRef.current);
+      flightJumpCompletionClearTimeoutRef.current = null;
+    }
+    if (flightJumpStabilizeAudioTimeoutRef.current !== null) {
+      window.clearTimeout(flightJumpStabilizeAudioTimeoutRef.current);
+      flightJumpStabilizeAudioTimeoutRef.current = null;
     }
   }, [isDockingApproachActive, isFlightTransitActive]);
 
@@ -7847,26 +9017,38 @@ export default function Home() {
       return;
     }
 
-    if (activeProximityCollisionContactIdRef.current === nearestImpactCandidate.id) {
+    const impactCandidate = nearestImpactCandidate as {
+      id: string;
+      type: ScannerContactType;
+      name: string;
+      distance: number;
+      threshold: number;
+    };
+
+    if (activeProximityCollisionContactIdRef.current === impactCandidate.id) {
       return;
     }
 
-    activeProximityCollisionContactIdRef.current = nearestImpactCandidate.id;
+    activeProximityCollisionContactIdRef.current = impactCandidate.id;
     const localSpeed = Math.abs(flightSpeedUnits);
     const severity: "glancing" | "critical" = (
-      nearestImpactCandidate.type === "station"
-      || nearestImpactCandidate.type === "star"
+      impactCandidate.type === "station"
+      || impactCandidate.type === "star"
       || localSpeed >= 3.5
-      || nearestImpactCandidate.distance <= Math.max(0.8, nearestImpactCandidate.threshold * 0.55)
+      || impactCandidate.distance <= Math.max(0.8, impactCandidate.threshold * 0.55)
     )
       ? "critical"
       : "glancing";
 
+    if (impactCandidate.type === "moon") {
+      return;
+    }
+
     void handleFlightSceneCollision({
-      contactId: nearestImpactCandidate.id,
-      contactType: nearestImpactCandidate.type,
-      contactName: nearestImpactCandidate.name,
-      distance: nearestImpactCandidate.distance,
+      contactId: impactCandidate.id,
+      contactType: impactCandidate.type,
+      contactName: impactCandidate.name,
+      distance: impactCandidate.distance,
       speed: localSpeed,
       severity,
     });
@@ -7937,14 +9119,49 @@ export default function Home() {
   };
 
   useEffect(() => {
-    if (selectedStation) {
-      setDockStationId(String(selectedStation.id));
-      setSelectedJumpSystemId(String(selectedStation.system_id));
+    if (!selectedStation) {
+      return;
     }
-  }, [selectedStation]);
+
+    const nextDockStationId = String(selectedStation.id);
+    const nextJumpSystemId = String(selectedStation.system_id);
+
+    if (dockStationId !== nextDockStationId) {
+      setDockStationId(nextDockStationId);
+    }
+
+    if (!isGalaxyModeActive && selectedJumpSystemId !== nextJumpSystemId) {
+      setSelectedJumpSystemId(nextJumpSystemId);
+    }
+  }, [dockStationId, isGalaxyModeActive, selectedJumpSystemId, selectedStation]);
 
   const handleTrade = async () => {
-    if (!stationId.trim()) return;
+    const dockedStationIdFromTelemetry = (
+      shipTelemetry?.status === "docked"
+      && Number.isInteger(shipTelemetry.docked_station_id)
+      && Number(shipTelemetry.docked_station_id) > 0
+    )
+      ? String(shipTelemetry.docked_station_id)
+      : null;
+
+    const dockedStationIdFromCommander = (
+      commanderProfile?.location_type === "station"
+      && Number.isInteger(commanderProfile.location_id)
+      && Number(commanderProfile.location_id) > 0
+    )
+      ? String(commanderProfile.location_id)
+      : null;
+
+    const effectiveStationId = (
+      dockedStationIdFromTelemetry
+      ?? dockedStationIdFromCommander
+      ?? stationId
+    ).trim();
+
+    if (!effectiveStationId) return;
+    if (stationId !== effectiveStationId) {
+      setStationId(effectiveStationId);
+    }
     if (!selectedCommodity) {
       setTradeStatus("Select a commodity first.");
       return;
@@ -7964,7 +9181,7 @@ export default function Home() {
     setTradeStatus("Submitting trade order...");
     try {
       const response = await fetch(
-        `${API_BASE}/api/stations/${stationId}/trade`,
+        `${API_BASE}/api/stations/${effectiveStationId}/trade`,
         {
           method: "POST",
           headers: {
@@ -7994,7 +9211,10 @@ export default function Home() {
         setTradeLoading(false);
         return;
       }
-      await fetchInventory({ silent: true });
+      await fetchInventory({
+        silent: true,
+        stationIdOverride: effectiveStationId,
+      });
       await fetchShipCargo({ silent: true });
       await fetchCommanderProfile();
       setCompletedTrades((previous) => previous + 1);
@@ -8135,7 +9355,7 @@ export default function Home() {
                 <button
                   type="button"
                   className={styles.danger}
-                  onClick={handleLogout}
+                  onClick={() => handleLogout()}
                 >
                   Logout
                 </button>
@@ -8611,6 +9831,17 @@ export default function Home() {
                 >
                   Refuel
                 </button>
+                {showDeveloperTools ? (
+                  <button
+                    type="button"
+                    disabled={shipOpsLoading}
+                    onClick={() => {
+                      void handleRefuelToFull();
+                    }}
+                  >
+                    Refuel Full
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   disabled={shipOpsLoading}
@@ -8908,6 +10139,15 @@ export default function Home() {
             <div className={styles.flightConsoleShell}>
               <div className={styles.flightViewport}>
                 <div
+                  className={`${styles.flightHyperspaceOverlay} ${hyperspaceJumpCinematicActive
+                    ? styles.flightHyperspaceOverlayActive
+                    : hyperspaceJumpExitFlashActive
+                      ? styles.flightHyperspaceOverlayExitFlash
+                      : ""
+                    }`}
+                  aria-hidden="true"
+                />
+                <div
                   className={`${styles.flightImpactFlash} ${effectiveFlightImpactFlash === "critical"
                     ? styles.flightImpactFlashCritical
                     : effectiveFlightImpactFlash === "glancing"
@@ -8917,7 +10157,18 @@ export default function Home() {
                   aria-hidden="true"
                 />
                 <div
-                  className={`${styles.flightContextPrimary} ${activeMode === "system" ? styles.flightContextPrimarySystem : ""
+                  className={`${styles.flightJumpCompletionVfx} ${effectiveFlightJumpCompletionVfx === "flash"
+                    ? styles.flightJumpCompletionVfxFlash
+                    : effectiveFlightJumpCompletionVfx === "stabilize"
+                      ? styles.flightJumpCompletionVfxStabilize
+                      : effectiveFlightJumpCompletionVfx === "reduced"
+                        ? styles.flightJumpCompletionVfxReduced
+                        : ""
+                    }`}
+                  aria-hidden="true"
+                />
+                <div
+                  className={`${styles.flightContextPrimary} ${isNavigationContextMode ? styles.flightContextPrimarySystem : ""
                     } ${effectiveFlightImpactFlash === "critical"
                       ? styles.flightContextPrimaryImpactCritical
                       : effectiveFlightImpactFlash === "glancing"
@@ -8925,6 +10176,34 @@ export default function Home() {
                         : ""
                     }`}
                 >
+                  {isNavigationMode ? (
+                    <div className={styles.navigationViewToggleBar} role="group" aria-label="Navigation view toggle">
+                      <div className={styles.navigationViewToggle}>
+                        <button
+                          type="button"
+                          className={navigationView === "system"
+                            ? styles.systemLayerButtonActive
+                            : styles.systemLayerButton}
+                          onClick={() => setNavigationView("system")}
+                          title="System view (S)"
+                        >
+                          System
+                        </button>
+                        <button
+                          type="button"
+                          className={navigationView === "galaxy"
+                            ? styles.systemLayerButtonActive
+                            : styles.systemLayerButton}
+                          onClick={() => setNavigationView("galaxy")}
+                          title="Galaxy view (G)"
+                        >
+                          Galaxy
+                        </button>
+                      </div>
+                      <span>Navigation View</span>
+                    </div>
+                  ) : null}
+
                   {activeMode === "trade" ? (
                     <div className={styles.flightContextPrimaryBody}>
                       <div className={styles.contextMarketBoard}>
@@ -9277,172 +10556,328 @@ export default function Home() {
                     </div>
                   ) : null}
 
-                  {activeMode === "system" ? (
+                  {isGalaxyModeActive ? (
                     <div className={styles.flightContextPrimaryBody}>
-                      <div className={styles.systemSelectionSummary}>
-                        <div className={styles.contextMessagePreviewMeta}>
-                          <span>System Map</span>
-                          <strong>{jumpTargetSystemLabel}</strong>
-                        </div>
-                        <div className={styles.contextMessagePreviewMeta}>
-                          <span>Approach Station</span>
-                          <strong>{jumpTargetStationLabel}</strong>
-                        </div>
-                      </div>
-
-                      <div className={styles.contextMessagePreview}>
-                        <div className={styles.systemOverviewGrid}>
-                          <div className={`${styles.systemOverviewColumn} ${styles.systemOverviewColumnRightAligned}`}>
-                            <div className={styles.contextMessagePreviewMeta}>
-                              <span>Local Chart</span>
+                      <div className={`${styles.contextMessagePreview} ${styles.galaxyPrimaryCard}`}>
+                        <div className={styles.galaxyViewRow} role="group" aria-label="Galaxy chart view mode">
+                          <div className={styles.galaxyModeStack}>
+                            <div className={styles.galaxyModeButtons}>
+                              <button
+                                type="button"
+                                className={galaxyChartViewMode === "local_reachable"
+                                  ? styles.systemLayerButtonActive
+                                  : styles.systemLayerButton}
+                                onClick={() => {
+                                  setGalaxyChartViewMode("local_reachable");
+                                }}
+                              >
+                                Local Reachable
+                              </button>
+                              <button
+                                type="button"
+                                className={galaxyChartViewMode === "galaxy"
+                                  ? styles.systemLayerButtonActive
+                                  : styles.systemLayerButton}
+                                onClick={() => {
+                                  setGalaxyChartViewMode("galaxy");
+                                }}
+                              >
+                                Whole Galaxy
+                              </button>
+                            </div>
+                            <div className={styles.galaxyViewStatus}>
                               <strong>
-                                {scannerSystemName ?? "Unknown system"}
-                                {scannerGenerationVersion ? ` · gen v${scannerGenerationVersion}` : ""}
-                                {localChartData?.system.seed_hash ? ` · seed ${localChartData.system.seed_hash}` : ""}
+                                {galaxySystemsLoading
+                                  ? "Syncing galaxy chart…"
+                                  : galaxyChartViewMode === "local_reachable"
+                                    ? `${galaxySystems.length} systems are reachable.`
+                                    : `${galaxySystems.length} systems in view.`}
                               </strong>
                             </div>
                           </div>
 
-                          <div className={styles.systemOverviewColumn}>
-                            <div className={styles.contextMessagePreviewMeta}>
-                              <span>Contract</span>
-                              <strong>
-                                {localChartContractVersionLabel}
-                                {localChartMutableState
-                                  ? ` · ${localChartMutableState.security_level.toUpperCase()} sec`
-                                  : ""}
-                              </strong>
-                            </div>
-                            <div className={styles.contextMessagePreviewMeta}>
-                              <span>Mutable State</span>
-                              <strong>
-                                {localChartFlightPhaseLabel}
-                                {` · target ${localChartTargetStatusLabel}`}
-                                {localChartTargetContactLabel !== "none"
-                                  ? ` (${localChartTargetContactLabel})`
-                                  : ""}
-                                {` · transition ${localChartTransitionLabel}`}
-                              </strong>
-                            </div>
-                            <div className={styles.contextMessagePreviewMeta}>
-                              <span>Audio Hints</span>
-                              <strong>{localChartAudioHintSummary}</strong>
-                            </div>
-                            {localChartLoading ? (
-                              <p>Local chart syncing…</p>
-                            ) : localChartError ? (
-                              <p>Local chart offline · {localChartError}</p>
-                            ) : null}
-                          </div>
-
-                          <div className={styles.systemOverviewColumn}>
-                            <div className={styles.contextMessagePreviewMeta}>
-                              <span>Selection</span>
-                              <strong data-testid="system-selected-contact">
-                                {selectedSystemChartContact
-                                  ? `${selectedSystemChartContact.contact_type.toUpperCase()} · ${selectedSystemChartContact.name}`
-                                  : "No contact selected"}
-                              </strong>
-                            </div>
-                            <div className={styles.contextMessagePreviewMeta}>
-                              <span>Range</span>
-                              <strong data-testid="system-selected-range">{selectedSystemChartDistanceLabel}</strong>
-                            </div>
-                            <div className={styles.contextMessagePreviewMeta}>
-                              <span>Targetability</span>
-                              <strong data-testid="system-selected-targetability">
-                                {selectedSystemChartTargetability}
-                              </strong>
+                          <div className={styles.galaxyControlCluster} role="group" aria-label="Galaxy chart controls">
+                            <div className={styles.galaxyPanPad}>
+                              <button
+                                type="button"
+                                className={`${styles.systemLayerButton} ${styles.galaxyControlButton}`}
+                                aria-label="Zoom out"
+                                title="Zoom out"
+                                onClick={() => setGalaxyMapZoom((current) => Math.max(1, current - 0.25))}
+                              >
+                                −
+                              </button>
+                              <button
+                                type="button"
+                                className={`${styles.systemLayerButton} ${styles.galaxyControlButton}`}
+                                aria-label="Pan up"
+                                title="Pan up"
+                                onClick={() => setGalaxyMapPanZ((current) => current + 40)}
+                              >
+                                ↑
+                              </button>
+                              <button
+                                type="button"
+                                className={`${styles.systemLayerButton} ${styles.galaxyControlButton}`}
+                                aria-label="Zoom in"
+                                title="Zoom in"
+                                onClick={() => setGalaxyMapZoom((current) => Math.min(3, current + 0.25))}
+                              >
+                                +
+                              </button>
+                              <button
+                                type="button"
+                                className={`${styles.systemLayerButton} ${styles.galaxyControlButton}`}
+                                aria-label="Pan left"
+                                title="Pan left"
+                                onClick={() => setGalaxyMapPanX((current) => current - 40)}
+                              >
+                                ←
+                              </button>
+                              <button
+                                type="button"
+                                className={`${styles.systemLayerButton} ${styles.galaxyControlButton} ${styles.galaxyControlResetButton}`}
+                                aria-label="Reset view"
+                                title="Reset view"
+                                onClick={() => {
+                                  setGalaxyMapZoom(1);
+                                  setGalaxyMapPanX(0);
+                                  setGalaxyMapPanZ(0);
+                                }}
+                              >
+                                ↺
+                              </button>
+                              <button
+                                type="button"
+                                className={`${styles.systemLayerButton} ${styles.galaxyControlButton}`}
+                                aria-label="Pan right"
+                                title="Pan right"
+                                onClick={() => setGalaxyMapPanX((current) => current + 40)}
+                              >
+                                →
+                              </button>
+                              <button
+                                type="button"
+                                className={`${styles.systemLayerButton} ${styles.galaxyControlButton}`}
+                                aria-label="Pan down"
+                                title="Pan down"
+                                onClick={() => setGalaxyMapPanZ((current) => current - 40)}
+                              >
+                                ↓
+                              </button>
                             </div>
                           </div>
                         </div>
+                        {galaxySystemsError ? <p>{galaxySystemsError}</p> : null}
 
-                        {showDeveloperTools ? (
-                          <div className={styles.systemObservabilityPanel} data-testid="system-observability-panel">
+                        <div className={styles.systemChartPanel}>
+                          <div className={styles.systemChartPanelHeader}>
+                            <span>2D Star Map</span>
+                          </div>
+                          <div className={styles.systemChartCanvas}>
+                            {galaxyMapPlot.points.length ? (
+                              <svg
+                                className={styles.systemChartOverlaySvg}
+                                viewBox={`0 0 ${galaxyMapPlot.width} ${galaxyMapPlot.height}`}
+                                data-testid="galaxy-chart-map"
+                              >
+                                <rect
+                                  className={styles.systemChartBackdrop}
+                                  x="0"
+                                  y="0"
+                                  width={galaxyMapPlot.width}
+                                  height={galaxyMapPlot.height}
+                                />
+                                <line
+                                  className={styles.systemChartCrosshair}
+                                  x1={galaxyMapPlot.width / 2}
+                                  y1="0"
+                                  x2={galaxyMapPlot.width / 2}
+                                  y2={galaxyMapPlot.height}
+                                />
+                                <line
+                                  className={styles.systemChartCrosshair}
+                                  x1="0"
+                                  y1={galaxyMapPlot.height / 2}
+                                  x2={galaxyMapPlot.width}
+                                  y2={galaxyMapPlot.height / 2}
+                                />
+
+                                {galaxyMapPlot.reachabilityZone ? (
+                                  <>
+                                    <ellipse
+                                      cx={galaxyMapPlot.reachabilityZone.center_x}
+                                      cy={galaxyMapPlot.reachabilityZone.center_y}
+                                      rx={galaxyMapPlot.reachabilityZone.radius_x}
+                                      ry={galaxyMapPlot.reachabilityZone.radius_y}
+                                      fill="var(--accent)"
+                                      fillOpacity="0.18"
+                                      stroke="var(--accent-strong)"
+                                      strokeOpacity="0.92"
+                                      strokeWidth="3"
+                                    />
+                                    <ellipse
+                                      cx={galaxyMapPlot.reachabilityZone.center_x}
+                                      cy={galaxyMapPlot.reachabilityZone.center_y}
+                                      rx={Math.max(0, galaxyMapPlot.reachabilityZone.radius_x - 8)}
+                                      ry={Math.max(0, galaxyMapPlot.reachabilityZone.radius_y - 8)}
+                                      fill="none"
+                                      stroke="var(--accent)"
+                                      strokeOpacity="0.6"
+                                      strokeWidth="1.4"
+                                    />
+                                  </>
+                                ) : null}
+
+                                {galaxyMapPlot.points.map((point) => (
+                                  <g key={`galaxy-map-${point.system_id}`}>
+                                    <circle
+                                      className={point.selected
+                                        ? `${styles.systemChartPointHalo} ${styles.systemChartPointHaloActive}`
+                                        : styles.systemChartPointHalo}
+                                      cx={point.plot_x}
+                                      cy={point.plot_y}
+                                      r={point.selected ? 7 : point.current ? 6 : 5}
+                                    />
+                                    <circle
+                                      role="button"
+                                      tabIndex={0}
+                                      data-testid={`galaxy-map-point-${point.system_id}`}
+                                      aria-label={`system ${point.name}`}
+                                      className={styles.systemChartPoint}
+                                      cx={point.plot_x}
+                                      cy={point.plot_y}
+                                      r={point.selected ? 3.6 : point.current ? 3.2 : 2.8}
+                                      fill={point.current
+                                        ? "var(--accent)"
+                                        : point.reachable
+                                          ? "var(--ink)"
+                                          : "var(--muted)"}
+                                      onClick={() => {
+                                        const systemId = String(point.system_id);
+                                        setSelectedGalaxySystemId(systemId);
+                                        setSelectedJumpSystemId(systemId);
+                                        setGalaxyMapLabelSystemId(systemId);
+                                      }}
+                                      onKeyDown={(event) => {
+                                        if (event.key !== "Enter" && event.key !== " ") {
+                                          return;
+                                        }
+                                        event.preventDefault();
+                                        const systemId = String(point.system_id);
+                                        setSelectedGalaxySystemId(systemId);
+                                        setSelectedJumpSystemId(systemId);
+                                        setGalaxyMapLabelSystemId("");
+                                      }}
+                                    />
+                                  </g>
+                                ))}
+                                {galaxyLocalSelectedLabel ? (
+                                  <g className={styles.galaxyMapSelectionLabelGroup}>
+                                    <rect
+                                      x={galaxyLocalSelectedLabel.x}
+                                      y={galaxyLocalSelectedLabel.y}
+                                      width={galaxyLocalSelectedLabel.width}
+                                      height={galaxyLocalSelectedLabel.height}
+                                      rx="6"
+                                      className={styles.galaxyMapSelectionLabelBox}
+                                    />
+                                    <text
+                                      x={galaxyLocalSelectedLabel.x + (galaxyLocalSelectedLabel.width / 2)}
+                                      y={galaxyLocalSelectedLabel.y + 12}
+                                      textAnchor="middle"
+                                      className={styles.galaxyMapSelectionLabelText}
+                                      data-testid="galaxy-map-selected-label"
+                                    >
+                                      {galaxyLocalSelectedLabel.labelText}
+                                    </text>
+                                  </g>
+                                ) : null}
+                              </svg>
+                            ) : (
+                              <p className={styles.systemChartEmpty}>No galaxy systems available.</p>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className={styles.galaxyFooterRow}>
+                          <div className={styles.contextMessagePreviewMeta}>
+                            <span>Hyperspace Target</span>
+                            <strong>{jumpTargetSystemLabel}</strong>
+                          </div>
+                          <div className={styles.contextMessagePreviewMeta}>
+                            <span>Approach Station</span>
+                            <strong>{jumpTargetStationLabel}</strong>
+                          </div>
+                          <div className={`${styles.contextMessagePreviewMeta} ${styles.galaxyTargetAction}`}>
+                            <button
+                              type="button"
+                              className={`${styles.flightPillButton} ${styles.galaxyTargetLockButton}`}
+                              disabled={!jumpTargetStationId || isDockingApproachActive}
+                              onClick={toggleFlightDestinationLock}
+                            >
+                              {flightDestinationLockedId === jumpTargetStationId
+                                ? "Unlock Hyperspace Target"
+                                : "Lock Hyperspace Target"}
+                            </button>
+                          </div>
+                        </div>
+
+                        {selectedGalaxySystem ? (
+                          <div className={styles.galaxyFooterRow}>
                             <div className={styles.contextMessagePreviewMeta}>
-                              <span>Observability</span>
-                              <strong data-testid="system-observability-last-event">
-                                {systemChartObservability.lastEventAt
-                                  ? `last event ${new Date(systemChartObservability.lastEventAt).toLocaleTimeString()}`
-                                  : "no telemetry yet"}
-                              </strong>
-                            </div>
-                            <div className={styles.systemObservabilityGrid}>
-                              <div>
-                                <span>Chart opens</span>
-                                <strong data-testid="system-observability-chart-opens">
-                                  {systemChartObservability.chartOpenCount}
-                                </strong>
-                              </div>
-                              <div>
-                                <span>Sync success</span>
-                                <strong data-testid="system-observability-sync-success">
-                                  {systemChartObservability.syncSuccessCount}
-                                </strong>
-                              </div>
-                              <div>
-                                <span>Sync failure</span>
-                                <strong data-testid="system-observability-sync-failure">
-                                  {systemChartObservability.syncFailureCount}
-                                </strong>
-                              </div>
-                              <div>
-                                <span>Chart fetch</span>
-                                <strong>
-                                  {systemChartObservability.chartSyncSuccessCount}
-                                  /
-                                  {systemChartObservability.chartSyncFailureCount}
-                                </strong>
-                              </div>
-                              <div>
-                                <span>Render budget alerts</span>
-                                <strong>
-                                  {systemChartObservability.renderBudgetBreachCount}
-                                </strong>
-                              </div>
-                              <div>
-                                <span>Last render (ms)</span>
-                                <strong>
-                                  {typeof systemChartObservability.lastRenderDurationMs === "number"
-                                    ? systemChartObservability.lastRenderDurationMs.toFixed(2)
-                                    : "-"}
-                                </strong>
-                              </div>
+                              <span>Selected System</span>
+                              <strong>{selectedGalaxySystem.name}</strong>
                             </div>
                             <div className={styles.contextMessagePreviewMeta}>
-                              <span>Last sync source</span>
+                              <span>Economy · Government</span>
                               <strong>
-                                {systemChartObservability.lastSyncSource ?? "-"}
-                                {systemChartObservability.lastSyncReason
-                                  ? ` · ${systemChartObservability.lastSyncReason}`
-                                  : ""}
+                                {selectedGalaxySystem.economy}
+                                {` · ${selectedGalaxySystem.government}`}
                               </strong>
                             </div>
-                            <div className={styles.systemObservabilityEvents} data-testid="system-observability-events">
-                              <div className={styles.systemObservabilityEventsHeader}>
-                                <span>Recent events</span>
-                                <strong>{systemChartObservabilityEvents.length}/20</strong>
-                              </div>
-                              {systemChartObservabilityEvents.length ? (
-                                <div className={styles.systemObservabilityEventsBody}>
-                                  {systemChartObservabilityEvents.map((entry) => (
-                                    <div key={entry.id} className={styles.systemObservabilityEventRow}>
-                                      <span>{new Date(entry.timestamp).toLocaleTimeString()}</span>
-                                      <span>{entry.event}</span>
-                                      <span>{entry.source}</span>
-                                      <span>{entry.outcome}</span>
-                                      <strong title={entry.message}>{entry.message}</strong>
-                                    </div>
-                                  ))}
-                                </div>
-                              ) : (
-                                <p className={styles.systemObservabilityEventsEmpty}>No events captured yet.</p>
-                              )}
+                            <div className={styles.contextMessagePreviewMeta}>
+                              <span>Overview</span>
+                              <strong>
+                                {galaxySystemOverviewLoading
+                                  ? "Loading details…"
+                                  : galaxySystemOverview
+                                    ? `${galaxySystemOverview.overview.planets_total} planets · ${galaxySystemOverview.overview.moons_total} moons · ${galaxySystemOverview.overview.stations_total} stations`
+                                    : "No details"}
+                              </strong>
                             </div>
                           </div>
                         ) : null}
+                        {galaxySystemOverview ? (
+                          <div className={styles.galaxyFooterRow}>
+                            <div className={styles.contextMessagePreviewMeta}>
+                              <span>Jump Readiness</span>
+                              <strong>
+                                {galaxySystemOverview.jump.reachable
+                                  ? "Reachable"
+                                  : `Blocked · ${galaxySystemOverview.jump.reason ?? "unknown"}`}
+                                {typeof galaxySystemOverview.jump.estimated_jump_fuel === "number"
+                                  ? ` · ${galaxySystemOverview.jump.estimated_jump_fuel} fuel`
+                                  : ""}
+                              </strong>
+                            </div>
+                            <div className={styles.contextMessagePreviewMeta}>
+                              <span>Route Suggestion</span>
+                              <strong>{galaxyRouteSummary}</strong>
+                            </div>
+                            <div className={styles.contextMessagePreviewMeta}>
+                              <span>Coordinates</span>
+                              <strong>{galaxyTargetCoordinates}</strong>
+                            </div>
+                          </div>
+                        ) : null}
+                        {galaxySystemOverviewError ? <p>{galaxySystemOverviewError}</p> : null}
                       </div>
+                    </div>
+                  ) : null}
 
+                  {isSystemModeActive ? (
+                    <div className={styles.flightContextPrimaryBody}>
                       <div className={styles.systemToolbar}>
                         <div className={styles.systemLayerControls}>
                           <span className={styles.systemLayerLabel}>Chart Layers</span>
@@ -9468,183 +10903,147 @@ export default function Home() {
                               );
                             })}
                           </div>
+                          <p className={`${styles.flightContextStatus} ${styles.systemTableHint}`}>
+                            Select a contact below to inspect local system objects and sync scanner focus.
+                          </p>
                         </div>
                         <div className={styles.systemChartControls}>
-                          <label className={styles.systemChartControl}>
-                            <span>Chart Zoom</span>
-                            <input
-                              type="text"
-                              inputMode="decimal"
-                              autoComplete="off"
-                              data-testid="local-chart-zoom-input"
-                              value={localChartZoomInput}
-                              onFocus={() => {
-                                setLocalChartZoomInputFocused(true);
-                              }}
-                              onBlur={() => {
-                                setLocalChartZoomInputFocused(false);
-                                const parsed = Number(localChartZoomInput.trim());
-                                if (!Number.isFinite(parsed) || parsed <= 0) {
-                                  setLocalChartZoomInput(formatChartZoomInputValue(localChartView.zoom));
-                                  return;
-                                }
-                                const normalized = roundLocalChartControlValue(
-                                  Math.min(20, Math.max(0.1, parsed)),
-                                );
-                                setLocalChartView((current) => ({
-                                  ...current,
-                                  zoom: normalized,
-                                }));
-                                setLocalChartZoomInput(formatChartZoomInputValue(normalized));
-                              }}
-                              onChange={(event) => {
-                                const nextValue = event.target.value;
-                                localChartViewInteractedRef.current = true;
-                                setLocalChartZoomInput(nextValue);
-                                const parsed = Number(nextValue.trim());
-                                if (!Number.isFinite(parsed) || parsed <= 0) {
-                                  return;
-                                }
-                                setLocalChartView((current) => ({
-                                  ...current,
-                                  zoom: roundLocalChartControlValue(Math.min(20, Math.max(0.1, parsed))),
-                                }));
-                              }}
-                            />
-                          </label>
-
-                          <label className={styles.systemChartControl}>
-                            <span>Scale</span>
-                            <select
-                              data-testid="local-chart-scale-mode-input"
-                              value={localChartView.scale_mode}
-                              onChange={(event) => {
-                                const nextMode = event.target.value === "linear"
-                                  ? "linear"
-                                  : "eased";
-                                setLocalChartView((current) => ({
-                                  ...current,
-                                  scale_mode: nextMode,
-                                }));
-                              }}
-                            >
-                              <option value="eased">Eased</option>
-                              <option value="linear">Linear</option>
-                            </select>
-                          </label>
-
-                          <label className={styles.systemChartControl}>
-                            <span>X</span>
-                            <input
-                              type="number"
-                              step={0.001}
-                              data-testid="local-chart-center-x-input"
-                              value={localChartView.center_x}
-                              onChange={(event) => {
-                                const parsed = Number(event.target.value);
-                                if (!Number.isFinite(parsed)) {
-                                  return;
-                                }
-                                setLocalChartView((current) => ({
-                                  ...current,
-                                  center_x: roundLocalChartControlValue(parsed),
-                                }));
-                              }}
-                            />
-                          </label>
-
-                          <label className={styles.systemChartControl}>
-                            <span>Z</span>
-                            <input
-                              type="number"
-                              step={0.001}
-                              data-testid="local-chart-center-z-input"
-                              value={localChartView.center_z}
-                              onChange={(event) => {
-                                const parsed = Number(event.target.value);
-                                if (!Number.isFinite(parsed)) {
-                                  return;
-                                }
-                                setLocalChartView((current) => ({
-                                  ...current,
-                                  center_z: roundLocalChartControlValue(parsed),
-                                }));
-                              }}
-                            />
-                          </label>
-
-                          <label className={styles.systemChartControl}>
-                            <span>Yaw</span>
-                            <input
-                              type="number"
-                              step={1}
-                              min={-180}
-                              max={180}
-                              data-testid="local-chart-yaw-input"
-                              value={localChartView.yaw_deg}
-                              onChange={(event) => {
-                                const parsed = Number(event.target.value);
-                                if (!Number.isFinite(parsed)) {
-                                  return;
-                                }
-                                setLocalChartView((current) => ({
-                                  ...current,
-                                  yaw_deg: roundLocalChartControlValue(Math.max(-180, Math.min(180, parsed))),
-                                }));
-                              }}
-                            />
-                          </label>
-
-                          <label className={styles.systemChartControl}>
-                            <span>Pitch</span>
-                            <input
-                              type="number"
-                              step={1}
-                              min={-75}
-                              max={75}
-                              data-testid="local-chart-pitch-input"
-                              value={localChartView.pitch_deg}
-                              onChange={(event) => {
-                                const parsed = Number(event.target.value);
-                                if (!Number.isFinite(parsed)) {
-                                  return;
-                                }
-                                setLocalChartView((current) => ({
-                                  ...current,
-                                  pitch_deg: roundLocalChartControlValue(Math.max(-75, Math.min(75, parsed))),
-                                }));
-                              }}
-                            />
-                          </label>
-
-                          <div className={styles.systemChartControl}>
-                            <button
-                              type="button"
-                              className={`${styles.systemLayerButtonActive} ${styles.systemChartActionButton}`}
-                              data-testid="local-chart-center-selected"
-                              disabled={!selectedSystemChartRawContact}
-                              onClick={handleSystemChartCenterOnSelected}
-                            >
-                              Center on selected
-                            </button>
-                          </div>
-
-                          <div className={styles.systemChartControl}>
-                            <button
-                              type="button"
-                              className={`${styles.systemLayerButtonActive} ${styles.systemChartActionButton}`}
-                              data-testid="local-chart-view-reset"
-                              onClick={resetLocalChartView}
-                            >
-                              Reset
-                            </button>
+                          <div className={`${styles.galaxyControlCluster} ${styles.systemChartControlCluster}`} role="group" aria-label="System chart controls">
+                            <div className={`${styles.galaxyPanPad} ${styles.systemChartPanPad}`}>
+                              <button
+                                type="button"
+                                className={`${styles.systemLayerButton} ${styles.galaxyControlButton}`}
+                                aria-label="Zoom out"
+                                title="Zoom out"
+                                onClick={() => {
+                                  localChartViewInteractedRef.current = true;
+                                  setLocalChartView((current) => ({
+                                    ...current,
+                                    zoom: roundLocalChartControlValue(
+                                      clampLocalChartZoom(current.zoom * 0.9),
+                                    ),
+                                  }));
+                                }}
+                              >
+                                −
+                              </button>
+                              <button
+                                type="button"
+                                className={`${styles.systemLayerButton} ${styles.galaxyControlButton}`}
+                                aria-label="Pan up"
+                                title="Pan up"
+                                onClick={() => {
+                                  localChartViewInteractedRef.current = true;
+                                  setLocalChartView((current) => {
+                                    const panStep = LOCAL_CHART_BUTTON_PAN_PIXELS
+                                      / clampLocalChartZoom(current.zoom);
+                                    return {
+                                      ...current,
+                                      center_z: roundLocalChartControlValue(current.center_z - panStep),
+                                    };
+                                  });
+                                }}
+                              >
+                                ↑
+                              </button>
+                              <button
+                                type="button"
+                                className={`${styles.systemLayerButton} ${styles.galaxyControlButton}`}
+                                aria-label="Zoom in"
+                                title="Zoom in"
+                                onClick={() => {
+                                  localChartViewInteractedRef.current = true;
+                                  setLocalChartView((current) => ({
+                                    ...current,
+                                    zoom: roundLocalChartControlValue(
+                                      clampLocalChartZoom(current.zoom * 1.1),
+                                    ),
+                                  }));
+                                }}
+                              >
+                                +
+                              </button>
+                              <button
+                                type="button"
+                                className={`${styles.systemLayerButton} ${styles.galaxyControlButton}`}
+                                aria-label="Pan left"
+                                title="Pan left"
+                                onClick={() => {
+                                  localChartViewInteractedRef.current = true;
+                                  setLocalChartView((current) => {
+                                    const panStep = LOCAL_CHART_BUTTON_PAN_PIXELS
+                                      / clampLocalChartZoom(current.zoom);
+                                    return {
+                                      ...current,
+                                      center_x: roundLocalChartControlValue(current.center_x - panStep),
+                                    };
+                                  });
+                                }}
+                              >
+                                ←
+                              </button>
+                              <button
+                                type="button"
+                                className={`${styles.systemLayerButton} ${styles.galaxyControlButton} ${styles.galaxyControlResetButton}`}
+                                aria-label="Reset view"
+                                title="Reset view"
+                                onClick={resetLocalChartView}
+                              >
+                                ↺
+                              </button>
+                              <button
+                                type="button"
+                                className={`${styles.systemLayerButton} ${styles.galaxyControlButton}`}
+                                aria-label="Pan right"
+                                title="Pan right"
+                                onClick={() => {
+                                  localChartViewInteractedRef.current = true;
+                                  setLocalChartView((current) => {
+                                    const panStep = LOCAL_CHART_BUTTON_PAN_PIXELS
+                                      / clampLocalChartZoom(current.zoom);
+                                    return {
+                                      ...current,
+                                      center_x: roundLocalChartControlValue(current.center_x + panStep),
+                                    };
+                                  });
+                                }}
+                              >
+                                →
+                              </button>
+                              <button
+                                type="button"
+                                className={`${styles.systemLayerButton} ${styles.galaxyControlButton}`}
+                                aria-label="Pan down"
+                                title="Pan down"
+                                onClick={() => {
+                                  localChartViewInteractedRef.current = true;
+                                  setLocalChartView((current) => {
+                                    const panStep = LOCAL_CHART_BUTTON_PAN_PIXELS
+                                      / clampLocalChartZoom(current.zoom);
+                                    return {
+                                      ...current,
+                                      center_z: roundLocalChartControlValue(current.center_z + panStep),
+                                    };
+                                  });
+                                }}
+                              >
+                                ↓
+                              </button>
+                              <button
+                                type="button"
+                                className={`${styles.systemLayerButton} ${styles.galaxyControlButton}`}
+                                data-testid="local-chart-center-selected"
+                                aria-label="Center on selected"
+                                title="Center on selected"
+                                disabled={!selectedSystemChartRawContact}
+                                onClick={handleSystemChartCenterOnSelected}
+                              >
+                                ⌖
+                              </button>
+                            </div>
                           </div>
                         </div>
                       </div>
-
-                      <p className={`${styles.flightContextStatus} ${styles.systemTableHint}`}>
-                        Select a contact below to inspect local system objects and sync scanner focus.
-                      </p>
 
                       <div className={styles.systemDataWorkspace}>
                         <div className={`${styles.contextMarketBoard} ${styles.systemTableBoard}`}>
@@ -9764,12 +11163,8 @@ export default function Home() {
                                   <span>{contact.visual_label}</span>
                                   <span>
                                     {(() => {
-                                      const liveDistanceKm = scannerLiveContactMap.get(contact.id)?.distance;
-                                      if (Number.isFinite(liveDistanceKm)) {
-                                        return `${Math.max(0, Number(liveDistanceKm)).toFixed(1)} km`;
-                                      }
                                       return contact.distance_km !== null
-                                        ? `${contact.distance_km.toFixed(1)} km`
+                                        ? formatScannerDistanceKm(contact.distance_km)
                                         : "—";
                                     })()}
                                   </span>
@@ -9788,151 +11183,130 @@ export default function Home() {
                           <div className={styles.systemChartCanvas}>
                             {systemChartPlot.points.length ? (
                               <div className={styles.systemChartCanvasStack}>
-                                {flightWebglState === "supported" ? (
-                                  <div className={styles.systemChartThreeLayer} data-testid="system-chart-webgl-layer">
-                                    <SystemChart3D
-                                      contacts={systemChart3DContacts}
-                                      selectedContactId={scannerSelectedContactId}
-                                      targetedContactId={activeSystemTargetContactId}
-                                      centerX={localChartView.center_x}
-                                      centerZ={localChartView.center_z}
-                                      yawDeg={localChartView.yaw_deg}
-                                      pitchDeg={localChartView.pitch_deg}
-                                      zoom={localChartView.zoom}
-                                    />
-                                  </div>
-                                ) : null}
                                 <svg
-                                  viewBox={`0 0 ${systemChartPlot.width} ${systemChartPlot.height}`}
+                                  viewBox={`-12 -28 ${systemChartPlot.width + 24} ${systemChartPlot.height + 56}`}
                                   role="img"
                                   aria-label="System chart view"
                                   data-testid="system-chart-canvas"
                                   className={styles.systemChartOverlaySvg}
-                                  onFocusCapture={() => setSystemChartCanvasFocused(true)}
-                                  onBlurCapture={(event) => {
-                                    if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                                      return;
-                                    }
-                                    setSystemChartCanvasFocused(false);
-                                  }}
                                   onPointerDown={handleSystemChartPointerDown}
                                   onPointerMove={handleSystemChartPointerMove}
                                   onPointerUp={handleSystemChartPointerUp}
                                   onPointerCancel={handleSystemChartPointerUp}
                                   onWheel={handleSystemChartWheel}
                                 >
-                                <rect
-                                  x="0"
-                                  y="0"
-                                  width={systemChartPlot.width}
-                                  height={systemChartPlot.height}
-                                  className={styles.systemChartBackdrop}
-                                />
-                                <line
-                                  x1={systemChartPlot.width / 2}
-                                  y1="0"
-                                  x2={systemChartPlot.width / 2}
-                                  y2={systemChartPlot.height}
-                                  className={styles.systemChartCrosshair}
-                                />
-                                <line
-                                  x1="0"
-                                  y1={systemChartPlot.height / 2}
-                                  x2={systemChartPlot.width}
-                                  y2={systemChartPlot.height / 2}
-                                  className={styles.systemChartCrosshair}
-                                />
-                                {systemChartPlot.rings.map((ring) => (
-                                  <g key={ring.id}>
-                                    <path
-                                      data-testid={`system-chart-orbit-ring-${ring.id}`}
-                                      d={ring.path}
-                                      strokeOpacity={ring.opacity}
-                                      className={styles.systemChartOrbitRing}
-                                    />
-                                  </g>
-                                ))}
-                                {systemChartPlot.points.map((point) => (
-                                  <g key={`chart-point-${point.id}`}>
-                                    {point.targeted ? (
+                                  <rect
+                                    x="0"
+                                    y="0"
+                                    width={systemChartPlot.width}
+                                    height={systemChartPlot.height}
+                                    className={styles.systemChartBackdrop}
+                                  />
+                                  <line
+                                    x1={systemChartPlot.width / 2}
+                                    y1="0"
+                                    x2={systemChartPlot.width / 2}
+                                    y2={systemChartPlot.height}
+                                    className={styles.systemChartCrosshair}
+                                  />
+                                  <line
+                                    x1="0"
+                                    y1={systemChartPlot.height / 2}
+                                    x2={systemChartPlot.width}
+                                    y2={systemChartPlot.height / 2}
+                                    className={styles.systemChartCrosshair}
+                                  />
+                                  {systemChartPlot.rings.map((ring) => (
+                                    <g key={ring.id}>
+                                      <path
+                                        data-testid={`system-chart-orbit-ring-${ring.id}`}
+                                        d={ring.path}
+                                        strokeOpacity={ring.opacity}
+                                        className={styles.systemChartOrbitRing}
+                                      />
+                                    </g>
+                                  ))}
+                                  {systemChartPlot.points.map((point) => (
+                                    <g key={`chart-point-${point.id}`}>
+                                      {point.targeted ? (
+                                        <circle
+                                          data-testid={`system-chart-target-halo-${point.id}`}
+                                          cx={point.plot_x}
+                                          cy={point.plot_y}
+                                          r={point.radius + 6}
+                                          className={styles.systemChartPointHaloActive}
+                                        />
+                                      ) : null}
+                                      {point.selected || point.contact_type === "station" ? (
+                                        <circle
+                                          cx={point.plot_x}
+                                          cy={point.plot_y}
+                                          r={point.selected ? point.radius + 4 : point.radius + 2}
+                                          className={point.selected
+                                            ? styles.systemChartPointHaloActive
+                                            : styles.systemChartPointHaloStation}
+                                        />
+                                      ) : null}
                                       <circle
-                                        data-testid={`system-chart-target-halo-${point.id}`}
+                                        data-testid={`system-chart-point-${point.id}`}
+                                        ref={(element) => {
+                                          systemChartPointRefs.current[point.id] = element;
+                                        }}
                                         cx={point.plot_x}
                                         cy={point.plot_y}
-                                        r={point.radius + 6}
-                                        className={styles.systemChartPointHaloActive}
-                                      />
-                                    ) : null}
-                                    {point.selected || point.contact_type === "station" ? (
-                                      <circle
-                                        cx={point.plot_x}
-                                        cy={point.plot_y}
-                                        r={point.selected ? point.radius + 4 : point.radius + 2}
-                                        className={point.selected
-                                          ? styles.systemChartPointHaloActive
-                                          : styles.systemChartPointHaloStation}
-                                      />
-                                    ) : null}
-                                    <circle
-                                      data-testid={`system-chart-point-${point.id}`}
-                                      ref={(element) => {
-                                        systemChartPointRefs.current[point.id] = element;
-                                      }}
-                                      cx={point.plot_x}
-                                      cy={point.plot_y}
-                                      r={point.selected ? point.radius + 1.5 : point.radius}
-                                      fill={point.color}
-                                      fillOpacity={point.opacity}
-                                      tabIndex={0}
-                                      role="button"
-                                      aria-label={`Select ${point.contact_type} ${point.name}`}
-                                      className={point.contact_type === "station"
-                                        ? `${styles.systemChartPoint} ${styles.systemChartPointStation}`
-                                        : styles.systemChartPoint}
-                                      onClick={() => handleSystemChartSelectContact(point.id)}
-                                      onKeyDown={(event) => {
-                                        if (event.key === "Enter" || event.key === " ") {
-                                          event.preventDefault();
-                                          handleSystemChartSelectContact(point.id);
-                                          return;
-                                        }
-
-                                        if (
-                                          event.key === "ArrowUp"
-                                          || event.key === "ArrowDown"
-                                          || event.key === "ArrowLeft"
-                                          || event.key === "ArrowRight"
-                                        ) {
-                                          const nextPointId = findDirectionalSystemChartPointId(
-                                            point.id,
-                                            event.key,
-                                          );
-                                          if (nextPointId) {
-                                            event.preventDefault();
-                                            handleSystemChartSelectContact(nextPointId);
-                                            window.requestAnimationFrame(() => {
-                                              const nextPoint = systemChartPointRefs.current[nextPointId];
-                                              nextPoint?.focus();
-                                            });
-                                          }
-                                        }
-                                      }}
-                                    >
-                                      <title>{`${point.contact_type.toUpperCase()} · ${point.name}`}</title>
-                                    </circle>
-                                    {point.selected ? (
-                                      <text
-                                        data-testid={`system-chart-selected-token-${point.id}`}
-                                        x={point.plot_x + point.radius + 6}
-                                        y={point.plot_y - (point.radius + 6)}
-                                        className={styles.systemChartSelectedToken}
+                                        r={point.selected ? point.radius + 1.5 : point.radius}
                                         fill={point.color}
+                                        fillOpacity={point.opacity}
+                                        tabIndex={0}
+                                        role="button"
+                                        aria-label={`Select ${point.contact_type} ${point.name}`}
+                                        className={point.contact_type === "station"
+                                          ? `${styles.systemChartPoint} ${styles.systemChartPointStation}`
+                                          : styles.systemChartPoint}
+                                        onClick={() => handleSystemChartSelectContact(point.id)}
+                                        onKeyDown={(event) => {
+                                          if (event.key === "Enter" || event.key === " ") {
+                                            event.preventDefault();
+                                            handleSystemChartSelectContact(point.id);
+                                            return;
+                                          }
+
+                                          if (
+                                            event.key === "ArrowUp"
+                                            || event.key === "ArrowDown"
+                                            || event.key === "ArrowLeft"
+                                            || event.key === "ArrowRight"
+                                          ) {
+                                            const nextPointId = findDirectionalSystemChartPointId(
+                                              point.id,
+                                              event.key,
+                                            );
+                                            if (nextPointId) {
+                                              event.preventDefault();
+                                              handleSystemChartSelectContact(nextPointId);
+                                              window.requestAnimationFrame(() => {
+                                                const nextPoint = systemChartPointRefs.current[nextPointId];
+                                                nextPoint?.focus();
+                                              });
+                                            }
+                                          }
+                                        }}
                                       >
-                                        {point.token}
-                                      </text>
-                                    ) : null}
-                                  </g>
-                                ))}
+                                        <title>{`${point.contact_type.toUpperCase()} · ${point.name}`}</title>
+                                      </circle>
+                                      {point.selected ? (
+                                        <text
+                                          data-testid={`system-chart-selected-token-${point.id}`}
+                                          x={point.plot_x + point.radius + 6}
+                                          y={point.plot_y - (point.radius + 6)}
+                                          className={styles.systemChartSelectedToken}
+                                          fill={point.color}
+                                        >
+                                          {point.token}
+                                        </text>
+                                      ) : null}
+                                    </g>
+                                  ))}
                                 </svg>
                               </div>
                             ) : (
@@ -9967,46 +11341,186 @@ export default function Home() {
                                 {selectedSystemChartContact ? selectedSystemChartContact.chart_z.toFixed(1) : "—"}
                               </strong>
                             </div>
+                            <div className={styles.contextMessagePreviewMeta}>
+                              <span>Zoom</span>
+                              <strong data-testid="system-chart-detail-zoom">
+                                {systemChartPlot.renderZoom.toFixed(3)}
+                              </strong>
+                            </div>
                           </div>
-                          <p className={styles.flightContextStatus} data-testid="system-chart-interaction-hint">
-                            Chart controls: drag rotate · Shift+drag pan · wheel/,.+- zoom
-                          </p>
-                          <p className={styles.flightContextStatus} data-testid="system-chart-default-fit-hint">
-                            Default view auto-fits star + planets.
-                          </p>
-                          {systemChartCanvasFocused ? (
-                            <p className={styles.flightContextStatus} data-testid="system-chart-interaction-hint-advanced">
-                              Advanced: [/] yaw · semicolon/quote pitch · Shift+Arrows pan · focused point Arrows nudge selection
-                            </p>
-                          ) : null}
+
                         </aside>
                       </div>
 
-                      <p className={styles.flightContextStatus} data-testid="system-shortcuts-hint">
-                        Shortcuts: ↑/↓/Home/End navigate · Enter/L waypoint · A transfer/dock · F focus in flight · T cycle station target · 1/2/3/4 sort (distance/type/radius/name)
-                      </p>
-                      <p className={styles.flightContextStatus} data-testid="system-target-path-status">
-                        <span>{systemTargetPathLabel.pathPrefix}</span>
-                        {systemTargetPathLabel.blockReasonLabel ? (
-                          <span
-                            className={`${styles.systemTargetPathBlockToken} ${styles.systemTargetPathBlockTokenActive}`}
-                            data-testid="system-target-path-block-token"
-                          >
-                            {` · block ${systemTargetPathLabel.blockReasonLabel} (${systemTargetBlockSummary})`}
-                          </span>
+                      <div className={styles.contextMessagePreview}>
+                        <div className={`${styles.systemOverviewGrid} ${styles.systemOverviewGridTight}`}>
+                          <div className={styles.contextMessagePreviewMeta}>
+                            <span>System Map</span>
+                            <strong>{scannerSystemName ?? localChartData?.system.name ?? "Unknown system"}</strong>
+                          </div>
+                          <div className={styles.contextMessagePreviewMeta}>
+                            <span>Selection</span>
+                            <strong data-testid="system-selected-contact">
+                              {selectedSystemChartContact
+                                ? selectedSystemChartContact.name
+                                : "No contact selected"}
+                            </strong>
+                          </div>
+                          <div className={`${styles.contextMessagePreviewMeta} ${styles.galaxyTargetAction}`}>
+                            <button
+                              type="button"
+                              className={`${styles.flightPillButton} ${styles.galaxyTargetLockButton}`}
+                              data-testid="system-footer-waypoint"
+                              disabled={!selectedSystemChartSupportsWaypoint || isDockingApproachActive}
+                              onClick={handleSystemChartWaypointToggle}
+                            >
+                              {selectedSystemChartWaypointLocked
+                                ? "Unlock selected waypoint"
+                                : "Lock selected waypoint"}
+                            </button>
+                          </div>
+                          <div className={styles.contextMessagePreviewMeta}>
+                            <span>Range</span>
+                            <strong data-testid="system-selected-range">{selectedSystemChartDistanceLabel}</strong>
+                          </div>
+                          <div className={styles.contextMessagePreviewMeta}>
+                            <span>Status</span>
+                            <strong>
+                              {localChartLoading
+                                ? "Syncing…"
+                                : localChartError
+                                  ? `Offline · ${localChartError}`
+                                  : "Online"}
+                            </strong>
+                          </div>
+                          <div className={styles.contextMessagePreviewMeta}>
+                            <span>Approach Station</span>
+                            <strong>{selectedSystemChartStationLabel}</strong>
+                          </div>
+                        </div>
+
+                        {showDeveloperTools ? (
+                          <div className={styles.systemObservabilityPanel} data-testid="system-observability-panel">
+                            <div className={styles.contextMessagePreviewMeta}>
+                              <span>Observability</span>
+                              <strong data-testid="system-observability-last-event">
+                                {systemChartObservability.lastEventAt
+                                  ? `last event ${new Date(systemChartObservability.lastEventAt).toLocaleTimeString()}`
+                                  : "no telemetry yet"}
+                              </strong>
+                            </div>
+                            <div className={styles.systemObservabilityGrid}>
+                              <div>
+                                <span>Chart opens</span>
+                                <strong data-testid="system-observability-chart-opens">
+                                  {systemChartObservability.chartOpenCount}
+                                </strong>
+                              </div>
+                              <div>
+                                <span>Sync success</span>
+                                <strong data-testid="system-observability-sync-success">
+                                  {systemChartObservability.syncSuccessCount}
+                                </strong>
+                              </div>
+                              <div>
+                                <span>Sync failure</span>
+                                <strong data-testid="system-observability-sync-failure">
+                                  {systemChartObservability.syncFailureCount}
+                                </strong>
+                              </div>
+                              <div>
+                                <span>Chart fetch</span>
+                                <strong>
+                                  {systemChartObservability.chartSyncSuccessCount}
+                                  /
+                                  {systemChartObservability.chartSyncFailureCount}
+                                </strong>
+                              </div>
+                              <div>
+                                <span>Render budget alerts</span>
+                                <strong>
+                                  {systemChartObservability.renderBudgetBreachCount}
+                                </strong>
+                              </div>
+                              <div>
+                                <span>Last render (ms)</span>
+                                <strong>
+                                  {typeof systemChartObservability.lastRenderDurationMs === "number"
+                                    ? systemChartObservability.lastRenderDurationMs.toFixed(2)
+                                    : "-"}
+                                </strong>
+                              </div>
+                            </div>
+                            <div className={styles.contextMessagePreviewMeta}>
+                              <span>Last sync source</span>
+                              <strong>
+                                {systemChartObservability.lastSyncSource ?? "-"}
+                                {systemChartObservability.lastSyncReason
+                                  ? ` · ${systemChartObservability.lastSyncReason}`
+                                  : ""}
+                              </strong>
+                            </div>
+                            <div className={styles.systemObservabilityEvents} data-testid="system-observability-events">
+                              <div className={styles.systemObservabilityEventsHeader}>
+                                <span>Recent events</span>
+                                <strong>{systemChartObservabilityEvents.length}/20</strong>
+                              </div>
+                              {systemChartObservabilityEvents.length ? (
+                                <div className={styles.systemObservabilityEventsBody}>
+                                  {systemChartObservabilityEvents.map((entry) => (
+                                    <div key={entry.id} className={styles.systemObservabilityEventRow}>
+                                      <span>{new Date(entry.timestamp).toLocaleTimeString()}</span>
+                                      <span>{entry.event}</span>
+                                      <span>{entry.source}</span>
+                                      <span>{entry.outcome}</span>
+                                      <strong title={entry.message}>{entry.message}</strong>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className={styles.systemObservabilityEventsEmpty}>No events captured yet.</p>
+                              )}
+                            </div>
+                          </div>
                         ) : null}
-                      </p>
-                      <p className={styles.systemActionReadiness} data-testid="system-action-readiness">
-                        <span>Action readiness:</span>
-                        <strong
-                          className={systemActionReadiness.state === "ready"
-                            ? styles.systemActionReady
-                            : styles.systemActionBlocked}
+                      </div>
+
+                      <div className={styles.systemStatusFooter}>
+                        <p
+                          className={`${styles.flightContextStatus} ${styles.systemStatusFooterLine}`}
+                          data-testid="system-shortcuts-hint"
                         >
-                          {systemActionReadiness.state === "ready" ? "READY" : "BLOCKED"}
-                        </strong>
-                        <span>{` · ${systemActionReadiness.reason}`}</span>
-                      </p>
+                          Shortcuts: ↑/↓/Home/End navigate · Enter/L waypoint · A transfer/dock · F focus in flight · 1/2/3/4 sort (distance/type/radius/name)
+                        </p>
+                        <p
+                          className={`${styles.flightContextStatus} ${styles.systemStatusFooterLine}`}
+                          data-testid="system-target-path-status"
+                        >
+                          <span>{systemTargetPathLabel.pathPrefix}</span>
+                          {systemTargetPathLabel.blockReasonLabel ? (
+                            <span
+                              className={`${styles.systemTargetPathBlockToken} ${styles.systemTargetPathBlockTokenActive}`}
+                              data-testid="system-target-path-block-token"
+                            >
+                              {` · block ${systemTargetPathLabel.blockReasonLabel} (${systemTargetBlockSummary})`}
+                            </span>
+                          ) : null}
+                        </p>
+                        <p
+                          className={`${styles.systemActionReadiness} ${styles.systemStatusFooterLine}`}
+                          data-testid="system-action-readiness"
+                        >
+                          <span>Action readiness:</span>
+                          <strong
+                            className={systemActionReadiness.state === "ready"
+                              ? styles.systemActionReady
+                              : styles.systemActionBlocked}
+                          >
+                            {systemActionReadiness.state === "ready" ? "READY" : "BLOCKED"}
+                          </strong>
+                          <span>{` · ${systemActionReadiness.reason}`}</span>
+                        </p>
+                      </div>
                     </div>
                   ) : null}
 
@@ -10100,8 +11614,8 @@ export default function Home() {
                             onScannerTelemetryChange={setScannerLiveContacts}
                             onCollision={
                               isDockingApproachActive
-                              || isFlightTransitActive
-                              || isSafetyCorridorCollisionStatus(flightCollisionStatus)
+                                || isFlightTransitActive
+                                || isSafetyCorridorCollisionStatus(flightCollisionStatus)
                                 ? undefined
                                 : handleFlightSceneCollision
                             }
@@ -10202,14 +11716,15 @@ export default function Home() {
                   </button>
                   <button
                     type="button"
-                    className={`${styles.flightPillButton} ${activeMode === "system" ? styles.flightPillActive : ""}`}
-                    onClick={() => handleModeSelect("system")}
+                    aria-label="System"
+                    className={`${styles.flightPillButton} ${isNavigationContextMode ? styles.flightPillActive : ""}`}
+                    onClick={() => handleModeSelect("navigation")}
                   >
-                    System
+                    Navigation
                   </button>
                 </div>
 
-                <div className={`${styles.flightActionButtons} ${activeMode === "system" ? styles.flightActionButtonsSystem : ""}`}>
+                <div className={`${styles.flightActionButtons} ${isNavigationContextMode ? styles.flightActionButtonsSystem : ""}`}>
                   {activeMode === "trade" ? (
                     <>
                       <button
@@ -10235,152 +11750,214 @@ export default function Home() {
                   ) : null}
 
                   {activeMode === "flight" ? (
-                    <>
-                      <div className={styles.flightSettingsMenu}>
-                        <button
-                          type="button"
-                          className={styles.flightPillButton}
-                          onClick={() => setShowFlightSettings((previous) => !previous)}
-                        >
-                          Settings
-                        </button>
-                        {showFlightSettings ? (
-                          <div className={styles.flightSettingsPopover}>
-                            <label>
-                              <span>Render Profile</span>
-                              <select
-                                value={flightRenderProfile}
-                                onChange={(event) => setFlightRenderProfile(event.target.value as FlightRenderProfile)}
-                              >
-                                <option value="performance">Performance</option>
-                                <option value="balanced">Balanced</option>
-                                <option value="cinematic">Cinematic</option>
-                              </select>
-                            </label>
-                            <label className={styles.flightSettingsToggleLabel}>
-                              <span>Labels</span>
-                              <input
-                                data-testid="flight-setting-contact-labels"
-                                type="checkbox"
-                                checked={showFlightContactLabels}
-                                onChange={(event) => {
-                                  setShowFlightContactLabels(event.target.checked);
-                                }}
-                              />
-                            </label>
-                            <label className={styles.flightSettingsToggleLabel}>
-                              <span>Scanner Debug</span>
-                              <input
-                                data-testid="flight-setting-scanner-debug"
-                                type="checkbox"
-                                checked={showFlightScannerDebug}
-                                onChange={(event) => {
-                                  setShowFlightScannerDebug(event.target.checked);
-                                }}
-                              />
-                            </label>
-                            <label className={styles.flightSettingsToggleLabel}>
-                              <span>Audio Cues</span>
-                              <input
-                                data-testid="flight-setting-audio-enabled"
-                                type="checkbox"
-                                checked={flightAudioEnabled}
-                                onChange={(event) => {
-                                  setFlightAudioEnabled(event.target.checked);
-                                }}
-                              />
-                            </label>
-                            <label className={styles.flightSettingsToggleLabel}>
-                              <span>Reduced Audio</span>
-                              <input
-                                data-testid="flight-setting-reduced-audio"
-                                type="checkbox"
-                                checked={reducedAudioPreferenceEnabled}
+                    !dockedAtStation ? (
+                      <>
+                        <div className={styles.flightSettingsMenu}>
+                          <button
+                            type="button"
+                            className={styles.flightPillButton}
+                            onClick={() => setShowFlightSettings((previous) => !previous)}
+                          >
+                            Settings
+                          </button>
+                          {showFlightSettings ? (
+                            <div className={styles.flightSettingsPopover}>
+                              <label>
+                                <span>Render Profile</span>
+                                <select
+                                  value={flightRenderProfile}
+                                  onChange={(event) => setFlightRenderProfile(event.target.value as FlightRenderProfile)}
+                                >
+                                  <option value="performance">Performance</option>
+                                  <option value="balanced">Balanced</option>
+                                  <option value="cinematic">Cinematic</option>
+                                </select>
+                              </label>
+                              <label className={styles.flightSettingsToggleLabel}>
+                                <span>Labels</span>
+                                <input
+                                  data-testid="flight-setting-contact-labels"
+                                  type="checkbox"
+                                  checked={showFlightContactLabels}
+                                  onChange={(event) => {
+                                    setShowFlightContactLabels(event.target.checked);
+                                  }}
+                                />
+                              </label>
+                              <label className={styles.flightSettingsToggleLabel}>
+                                <span>Scanner Debug</span>
+                                <input
+                                  data-testid="flight-setting-scanner-debug"
+                                  type="checkbox"
+                                  checked={showFlightScannerDebug}
+                                  onChange={(event) => {
+                                    setShowFlightScannerDebug(event.target.checked);
+                                  }}
+                                />
+                              </label>
+                              <label className={styles.flightSettingsToggleLabel}>
+                                <span>Audio Cues</span>
+                                <input
+                                  data-testid="flight-setting-audio-enabled"
+                                  type="checkbox"
+                                  checked={flightAudioEnabled}
+                                  onChange={(event) => {
+                                    setFlightAudioEnabled(event.target.checked);
+                                  }}
+                                />
+                              </label>
+                              <label>
+                                <span>Audio Engine</span>
+                                <select
+                                  value={flightAudioEngine}
+                                  onChange={(event) => {
+                                    setFlightAudioEngine(event.target.value as FlightAudioEngine);
+                                  }}
+                                >
+                                  <option value="media-audio">Media (compatibility)</option>
+                                  <option value="web-audio">WebAudio (synth)</option>
+                                </select>
+                              </label>
+                              <label className={styles.flightSettingsToggleLabel}>
+                                <span>Reduced Audio</span>
+                                <input
+                                  data-testid="flight-setting-reduced-audio"
+                                  type="checkbox"
+                                  checked={reducedAudioPreferenceEnabled}
+                                  disabled={!flightAudioEnabled}
+                                  onChange={(event) => {
+                                    setReducedAudioPreferenceEnabled(event.target.checked);
+                                  }}
+                                />
+                              </label>
+                              <p className={styles.flightSettingsHint}>
+                                {reducedMotionPreferenceEnabled
+                                  ? "Reduced motion enabled: propulsion cues are limited."
+                                  : "Reduced audio limits propulsion cues during active flight."}
+                              </p>
+                              <button
+                                type="button"
+                                className={styles.flightSettingsActionButton}
                                 disabled={!flightAudioEnabled}
-                                onChange={(event) => {
-                                  setReducedAudioPreferenceEnabled(event.target.checked);
+                                onClick={() => {
+                                  void handleFlightAudioTest();
                                 }}
-                              />
-                            </label>
-                            <p className={styles.flightSettingsHint}>
-                              {reducedMotionPreferenceEnabled
-                                ? "Reduced motion enabled: propulsion cues are limited."
-                                : "Reduced audio limits propulsion cues during active flight."}
-                            </p>
-                          </div>
-                        ) : null}
-                      </div>
-                      <button
-                        type="button"
-                        className={styles.flightPillButton}
-                        onClick={toggleFlightDestinationLock}
-                      >
-                        {flightDestinationLockedId === jumpTargetStationId
-                          ? "Unlock waypoint"
-                          : "Lock waypoint"}
-                      </button>
-                      {isDockingApproachActive ? (
+                              >
+                                Test Audio
+                              </button>
+                              <button
+                                type="button"
+                                className={styles.flightSettingsActionButton}
+                                onClick={() => {
+                                  void handleFlightMediaAudioTest();
+                                }}
+                              >
+                                Test Media Audio
+                              </button>
+                              <button
+                                type="button"
+                                className={styles.flightSettingsActionButton}
+                                disabled={shipOpsLoading}
+                                onClick={() => {
+                                  void handleRefuelToFull();
+                                }}
+                              >
+                                Refuel Full
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
+                        <Tooltip
+                          content={galaxyJumpDisabledReason}
+                          placement="top"
+                          disabled={!galaxyJumpDisabledReason}
+                        >
+                          <button
+                            type="button"
+                            className={styles.flightPillButton}
+                            disabled={isGalaxyJumpDisabled}
+                            onClick={handleGalaxyInitiateJump}
+                          >
+                            Hyperspace Jump
+                          </button>
+                        </Tooltip>
                         <button
                           type="button"
                           className={styles.flightPillButton}
-                          onClick={handleCancelDockingApproach}
-                          disabled={shipOpsLoading}
+                          onClick={toggleFlightDestinationLock}
                         >
-                          Cancel Docking
+                          {flightDestinationLockedId === jumpTargetStationId
+                            ? "Unlock waypoint"
+                            : "Lock waypoint"}
                         </button>
-                      ) : (
+                        {isDockingApproachActive ? (
+                          <button
+                            type="button"
+                            className={styles.flightPillButton}
+                            onClick={handleCancelDockingApproach}
+                            disabled={shipOpsLoading}
+                          >
+                            Cancel Docking
+                          </button>
+                        ) : (
+                          <Tooltip
+                            content={dockDisabledReason}
+                            placement="top"
+                            disabled={!dockDisabledReason}
+                          >
+                            <button
+                              type="button"
+                              className={styles.flightPillButton}
+                              onClick={() => {
+                                if (activeDockTargetStationId) {
+                                  void handleDockCommand(activeDockTargetStationId);
+                                }
+                              }}
+                              disabled={isDockDisabled}
+                            >
+                              Dock
+                            </button>
+                          </Tooltip>
+                        )}
                         <Tooltip
-                          content={dockDisabledReason}
+                          content={jumpDisabledReason}
                           placement="top"
-                          disabled={!dockDisabledReason}
+                          disabled={!jumpDisabledReason}
                         >
                           <button
                             type="button"
                             className={styles.flightPillButton}
                             onClick={() => {
-                              if (activeDockTargetStationId) {
-                                void handleDockCommand(activeDockTargetStationId);
-                              }
+                              void handleFlightJumpSequence({ jumpMode: "system" });
                             }}
-                            disabled={isDockDisabled}
+                            disabled={isJumpDisabled}
                           >
-                            Dock
+                            {flightJumpPhase === FLIGHT_PHASE.CHARGING
+                              ? "Charging..."
+                              : flightJumpPhase === FLIGHT_PHASE.JUMPING
+                                ? "Jumping..."
+                                : "System Jump"}
                           </button>
                         </Tooltip>
-                      )}
+                      </>
+                    ) : null
+                  ) : null}
+
+                  {isGalaxyModeActive && !dockedAtStation ? (
+                    <Tooltip
+                      content={galaxyJumpDisabledReason}
+                      placement="top"
+                      disabled={!galaxyJumpDisabledReason}
+                    >
                       <button
                         type="button"
                         className={styles.flightPillButton}
-                        onClick={() => {
-                          void handleUndockCommand();
-                        }}
-                        disabled={shipOpsLoading || shipTelemetry?.status === "in-space" || isFlightTransitActive}
+                        disabled={isGalaxyJumpDisabled}
+                        onClick={handleGalaxyInitiateJump}
                       >
-                        Undock
+                        Hyperspace Jump
                       </button>
-                      <Tooltip
-                        content={jumpDisabledReason}
-                        placement="top"
-                        disabled={!jumpDisabledReason}
-                      >
-                        <button
-                          type="button"
-                          className={styles.flightPillButton}
-                          onClick={() => {
-                            void handleFlightJumpSequence();
-                          }}
-                          disabled={isJumpDisabled}
-                        >
-                          {flightJumpPhase === FLIGHT_PHASE.CHARGING
-                            ? "Charging..."
-                            : flightJumpPhase === FLIGHT_PHASE.JUMPING
-                              ? "Jumping..."
-                              : flightJumpCooldownSeconds > 0
-                                ? `Cooldown ${flightJumpCooldownSeconds}s`
-                                : "Jump"}
-                        </button>
-                      </Tooltip>
-                    </>
+                    </Tooltip>
                   ) : null}
 
                   {activeMode === "ship" ? (
@@ -10424,7 +12001,7 @@ export default function Home() {
                           void handleShipOperation("jump");
                         }}
                       >
-                        Jump
+                        System Jump
                       </button>
                       <button
                         type="button"
@@ -10539,17 +12116,8 @@ export default function Home() {
                     </>
                   ) : null}
 
-                  {activeMode === "system" ? (
+                  {isSystemModeActive ? (
                     <>
-                      <button
-                        type="button"
-                        className={styles.flightPillButton}
-                        data-testid="system-quick-cycle-target"
-                        disabled={!visibleSystemChartStationContacts.length}
-                        onClick={handleSystemChartCycleStationTarget}
-                      >
-                        Cycle stn targets
-                      </button>
                       <button
                         type="button"
                         className={styles.flightPillButton}
@@ -10558,17 +12126,6 @@ export default function Home() {
                         onClick={handleSystemChartFocusInFlight}
                       >
                         Focus target in flight
-                      </button>
-                      <button
-                        type="button"
-                        className={styles.flightPillButton}
-                        data-testid="system-quick-waypoint"
-                        disabled={!selectedSystemChartSupportsWaypoint || isDockingApproachActive}
-                        onClick={handleSystemChartWaypointToggle}
-                      >
-                        {selectedSystemChartWaypointLocked
-                          ? "Unlock selected waypoint"
-                          : "Lock selected waypoint"}
                       </button>
                     </>
                   ) : null}
@@ -10740,7 +12297,7 @@ export default function Home() {
                       <div className={styles.scannerTopRow}>
                         <div className={`${styles.scannerTopMetric} ${styles.scannerTopMetricSystem}`}>
                           <span>System</span>
-                          <strong>{scannerSystemName ?? (selectedSystemId ? `System #${selectedSystemId}` : "System unknown")}</strong>
+                          <strong>{scannerSystemName ?? localChartData?.system.name ?? "System unknown"}</strong>
                         </div>
                         <div className={`${styles.scannerTopMetric} ${styles.scannerTopMetricDockRange} ${styles.scannerTopMetricCenter}`}>
                           <span>Dock Target Range</span>
@@ -10785,6 +12342,16 @@ export default function Home() {
                           ))}
                         </select>
                       </div>
+                      {selectedJumpSystemId ? (
+                        <div className={styles.scannerClearanceChip}>
+                          <span>Clearance Distance</span>
+                          <strong>
+                            {nearestHyperspaceClearanceDistanceKm !== null
+                              ? `${Math.max(0, Math.round(nearestHyperspaceClearanceDistanceKm))} km`
+                              : "—"}
+                          </strong>
+                        </div>
+                      ) : null}
                       {scannerHudContacts.map((contact) => {
                         if (!contact.visibleOnScannerGrid) {
                           return null;
@@ -10831,7 +12398,7 @@ export default function Home() {
                       {`Chart hints: ${localChartAudioHintSummary}`}
                     </span>
                     <span style={{ display: "none" }} data-testid="flight-audio-dispatcher-state">
-                      {`event ${flightAudioDispatchSummary.lastEvent} · dispatched ${flightAudioDispatchSummary.dispatchedCount} · cooldown ${flightAudioDispatchSummary.blockedCooldownCount} · category ${flightAudioDispatchSummary.blockedCategoryCapCount} · settings ${flightAudioDispatchSummary.blockedSettingsCount} · audio ${flightAudioEnabled ? "on" : "off"} · reduced ${reducedAudioEnabled ? "on" : "off"} · playback ${flightAudioPlaybackSummary.lastResult} · played ${flightAudioPlaybackSummary.playedCount} · unsupported ${flightAudioPlaybackSummary.unsupportedCount}`}
+                      {`event ${flightAudioDispatchSummary.lastEvent} · dispatched ${flightAudioDispatchSummary.dispatchedCount} · cooldown ${flightAudioDispatchSummary.blockedCooldownCount} · category ${flightAudioDispatchSummary.blockedCategoryCapCount} · settings ${flightAudioDispatchSummary.blockedSettingsCount} · audio ${flightAudioEnabled ? "on" : "off"} · engine ${flightAudioEngine} · reduced ${reducedAudioEnabled ? "on" : "off"} · playback ${flightAudioPlaybackSummary.lastResult} · played ${flightAudioPlaybackSummary.playedCount} · unsupported ${flightAudioPlaybackSummary.unsupportedCount}`}
                     </span>
                     <div className={styles.scannerContactsList}>
                       {scannerHudContactsForList
@@ -10957,7 +12524,7 @@ export default function Home() {
                   content="Fetch the latest inventory and prices for the selected station."
                   placement="top"
                 >
-                  <button type="button" onClick={fetchInventory}>
+                  <button type="button" onClick={() => { void fetchInventory(); }}>
                     Refresh
                   </button>
                 </Tooltip>
@@ -11285,7 +12852,7 @@ export default function Home() {
               </div>
             ) : null}
 
-            {activeMode === "flight" ? (
+            {activeMode === "navigation" ? (
               <div className={styles.contextMiniList}>
                 <p>Flight Focus</p>
                 <p>Docked: {formatStationLabel(shipTelemetry?.docked_station_id)}</p>

@@ -28,6 +28,8 @@ All notable changes to this project are documented in this file.
   - `prd/batch-04-e2e-flight-trade-loop-plan.md`
   - `prd/batch-05-flight-scene-traffic-visuals-plan.md`
   - `prd/batch-06-system-celestials-scanner-plan.md`
+- Online real-star naming ingestion for galaxy bootstrap via HYG catalog source with deterministic fallback support (`backend/scripts/bootstrap_known_star_systems.py`).
+- Backend tests for bootstrap real-name extraction/selection behavior (`backend/tests/test_bootstrap_known_star_systems.py`).
 
 ### Changed
 - Standardized market, cargo, and story panels to explicit loading/empty/error states.
@@ -46,6 +48,7 @@ All notable changes to this project are documented in this file.
 - Implemented delayed interstellar comms semantics: outbound relay messages queue and auto-transition to `delivered` when due; queued inbound relay messages are excluded from unread counts until released.
 - Expanded comms backend tests to cover queued-to-delivered transition and unread gating for delayed inbound messages.
 - Updated frontend comms delivery rendering to support and label `queued`/`delivered`/`instant` states clearly.
+- Updated bootstrap runbook in backend docs with online real-name flags, dataset source override options, timeout/max-name controls, and fallback behavior notes (`backend/README.md`).
 
 ### Fixed
 - Removed one-off empty-state implementation in favor of shared `DataState`.

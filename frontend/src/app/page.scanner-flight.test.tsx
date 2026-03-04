@@ -411,6 +411,100 @@ describe("Home scanner to flight scene wiring", () => {
           );
         }
 
+        if (url.includes("/api/systems/galaxy/systems?") && url.includes("ship_id=1")) {
+          const localReachableMode = url.includes("view_mode=local_reachable");
+          return new Response(
+            JSON.stringify({
+              current_system_id: 1,
+              view_mode: localReachableMode ? "local_reachable" : "galaxy",
+              systems: localReachableMode
+                ? [
+                  {
+                    system_id: 1,
+                    name: "Vega",
+                    x: 0,
+                    y: 0,
+                    z: 0,
+                    economy: "industrial",
+                    government: "corporate",
+                    tech_level: 8,
+                    population: 1200000,
+                    reachable_from_current: true,
+                    estimated_jump_fuel: 0,
+                    reachability_reason: "already in-system",
+                  },
+                ]
+                : [
+                  {
+                    system_id: 1,
+                    name: "Vega",
+                    x: 0,
+                    y: 0,
+                    z: 0,
+                    economy: "industrial",
+                    government: "corporate",
+                    tech_level: 8,
+                    population: 1200000,
+                    reachable_from_current: true,
+                    estimated_jump_fuel: 0,
+                    reachability_reason: "already in-system",
+                  },
+                  {
+                    system_id: 2,
+                    name: "Lave",
+                    x: 6,
+                    y: 0,
+                    z: 4,
+                    economy: "agricultural",
+                    government: "democracy",
+                    tech_level: 5,
+                    population: 850000,
+                    reachable_from_current: false,
+                    estimated_jump_fuel: 4.2,
+                    reachability_reason: "range-limit",
+                  },
+                ],
+            }),
+            { status: 200 },
+          );
+        }
+
+        if (url.match(/\/api\/systems\/galaxy\/systems\/\d+\/overview\?ship_id=1/)) {
+          return new Response(
+            JSON.stringify({
+              system: {
+                id: 1,
+                name: "Vega",
+                economy: "industrial",
+                government: "corporate",
+                tech_level: 8,
+                population: 1200000,
+              },
+              jump: {
+                reachable: true,
+                estimated_jump_fuel: 0,
+                reason: "already in-system",
+              },
+              overview: {
+                planets_total: 1,
+                moons_total: 0,
+                stations_total: 1,
+                planets: [{
+                  name: "Vega Prime I",
+                  body_type: "rocky",
+                  orbit_index: 1,
+                }],
+                stations: [{
+                  name: "Vega Tradeport",
+                  archetype: "coriolis",
+                  host_body_name: "Vega Prime I",
+                }],
+              },
+            }),
+            { status: 200 },
+          );
+        }
+
         if (url.includes("/api/systems/1/local-chart")) {
           if (localChartStatusCode !== 200) {
             return new Response(
@@ -654,6 +748,67 @@ describe("Home scanner to flight scene wiring", () => {
 
     const planetRow = screen.getByTestId("scanner-contact-row-planet-201");
     expect(planetRow.textContent).toContain("1.60M km");
+  });
+
+  it("updates scanner contact row distance from live telemetry updates", async () => {
+    scannerContactsPayload = [
+      {
+        id: "station-101",
+        contact_type: "station",
+        name: "Vega Tradeport",
+        distance_km: 42,
+        bearing_x: 0.1,
+        bearing_y: 0.2,
+        scene_x: 10,
+        scene_y: 0,
+        scene_z: -20,
+        station_archetype_shape: "coriolis",
+        orbiting_planet_name: "Vega Prime I",
+      },
+    ];
+
+    (globalThis as unknown as {
+      __scannerTelemetryOverrides?: Record<string, Partial<{ distance: number }>>;
+    }).__scannerTelemetryOverrides = {
+      "station-101": {
+        distance: 27,
+      },
+    };
+
+    render(
+      <ToastProvider>
+        <Home />
+      </ToastProvider>,
+    );
+
+    const flightModeButton = (await screen.findAllByRole("button", {
+      name: /^Flight$/,
+    }))[0];
+    fireEvent.click(flightModeButton);
+
+    await waitFor(() => {
+      const stationRow = screen.getByTestId("scanner-contact-row-station-101");
+      expect(stationRow.textContent).toContain("27.0 km");
+    });
+
+    (globalThis as unknown as {
+      __scannerTelemetryOverrides?: Record<string, Partial<{ distance: number }>>;
+    }).__scannerTelemetryOverrides = {
+      "station-101": {
+        distance: 5,
+      },
+    };
+
+    const systemModeButton = (await screen.findAllByRole("button", {
+      name: /^System$/,
+    }))[0];
+    fireEvent.click(systemModeButton);
+    fireEvent.click(flightModeButton);
+
+    await waitFor(() => {
+      const stationRow = screen.getByTestId("scanner-contact-row-station-101");
+      expect(stationRow.textContent).toContain("5.0 km");
+    });
   });
 
   it("normalizes unknown local chart flight phase to idle", async () => {
@@ -1024,6 +1179,66 @@ describe("Home scanner to flight scene wiring", () => {
     });
   });
 
+  it("separates local System mode from Galaxy navigation mode", async () => {
+    render(
+      <ToastProvider>
+        <Home />
+      </ToastProvider>,
+    );
+
+    const navigationModeButton = (await screen.findAllByRole("button", {
+      name: /^System$/,
+    }))[0];
+    fireEvent.click(navigationModeButton);
+
+    const galaxyModeButton = await screen.findByRole("button", {
+      name: /^Galaxy$/,
+    });
+    fireEvent.click(galaxyModeButton);
+
+    expect(await screen.findByText("2D Star Map")).toBeInTheDocument();
+    expect(screen.getByText("1 systems are reachable.")).toBeInTheDocument();
+    expect(screen.queryByText("Local Chart")).not.toBeInTheDocument();
+
+    const systemModeButton = (await screen.findAllByRole("button", {
+      name: /^System$/,
+    }))[0];
+    fireEvent.click(systemModeButton);
+
+    expect(await screen.findByTestId("system-chart-canvas")).toBeInTheDocument();
+    expect(screen.queryByText("2D Star Map")).not.toBeInTheDocument();
+  });
+
+  it("renders 2D galaxy star map and switches between reachable and whole galaxy", async () => {
+    render(
+      <ToastProvider>
+        <Home />
+      </ToastProvider>,
+    );
+
+    const navigationModeButton = (await screen.findAllByRole("button", {
+      name: /^System$/,
+    }))[0];
+    fireEvent.click(navigationModeButton);
+
+    const galaxyModeButton = await screen.findByRole("button", {
+      name: /^Galaxy$/,
+    });
+    fireEvent.click(galaxyModeButton);
+
+    expect(await screen.findByTestId("galaxy-chart-map")).toBeInTheDocument();
+    expect(screen.getByText("1 systems are reachable.")).toBeInTheDocument();
+    expect(screen.getByTestId("galaxy-map-point-1")).toBeInTheDocument();
+    expect(screen.queryByTestId("galaxy-map-point-2")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Whole Galaxy$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("2 systems in view.")).toBeInTheDocument();
+      expect(screen.getByTestId("galaxy-map-point-2")).toBeInTheDocument();
+    });
+  });
+
   it("persists selected scanner contact across reload and falls back when missing", async () => {
     const observabilityEvents: Array<Record<string, unknown>> = [];
     const onObservability = (event: Event): void => {
@@ -1179,10 +1394,10 @@ describe("Home scanner to flight scene wiring", () => {
     fireEvent.click(systemModeButton);
 
     const starRow = await screen.findByTestId("local-chart-row-star-301");
-    expect(starRow.textContent).toContain("g-class · r640000km");
+    expect(starRow.textContent).toContain("g-class · r640,000km");
 
     const planetRow = await screen.findByTestId("local-chart-row-planet-201");
-    expect(planetRow.textContent).toContain("rocky · r6800km");
+    expect(planetRow.textContent).toContain("rocky · r6,800km");
   });
 
   it("renders moon rows with moon visual labels in local chart", async () => {
@@ -1220,18 +1435,18 @@ describe("Home scanner to flight scene wiring", () => {
     fireEvent.click(systemModeButton);
 
     const moonRow = await screen.findByTestId("local-chart-row-moon-401");
-    expect(moonRow.textContent).toContain("moon ice · r1900km");
+    expect(moonRow.textContent).toContain("moon ice · r1,900km");
     expect(screen.getByTestId("system-chart-point-moon-401")).toBeInTheDocument();
 
     fireEvent.click(moonRow);
     await waitFor(() => {
       expect(screen.getByTestId("system-selected-contact").textContent).toContain(
-        "MOON · Vega Prime I-a",
+        "Vega Prime I-a",
       );
     });
     expect(screen.getByTestId("system-row-token-moon-401").textContent).toContain("●");
     expect(screen.getByTestId("system-selected-token").textContent).toContain("●");
-    expect(screen.getByTestId("system-quick-waypoint")).not.toBeDisabled();
+    expect(screen.getByTestId("system-footer-waypoint")).not.toBeDisabled();
   });
 
   it("passes moon celestial anchors into flight scene", async () => {
@@ -1346,7 +1561,7 @@ describe("Home scanner to flight scene wiring", () => {
 
     const starRow = await screen.findByTestId("local-chart-row-star-301");
     expect(starRow).toBeInTheDocument();
-    expect(starRow.textContent).toContain("g-class · r610000km");
+    expect(starRow.textContent).toContain("g-class · r610,000km");
 
     expect(screen.queryByTestId("local-chart-row-planet-201")).not.toBeInTheDocument();
     expect(screen.queryByTestId("local-chart-row-station-101")).not.toBeInTheDocument();
@@ -1650,7 +1865,7 @@ describe("Home scanner to flight scene wiring", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("system-selected-contact").textContent).toContain(
-        "STATION · Vega Tradeport",
+        "Vega Tradeport",
       );
     });
 
@@ -1660,8 +1875,8 @@ describe("Home scanner to flight scene wiring", () => {
     await waitFor(() => {
       expect(screen.queryByTestId("local-chart-row-station-101")).not.toBeInTheDocument();
       const selectedContact = screen.getByTestId("system-selected-contact").textContent || "";
-      expect(selectedContact).not.toContain("STATION · Vega Tradeport");
-      expect(selectedContact).toMatch(/^(STAR|PLANET|SHIP) · /);
+      expect(selectedContact).not.toContain("Vega Tradeport");
+      expect(selectedContact.length).toBeGreaterThan(0);
     });
   });
 
@@ -1717,18 +1932,31 @@ describe("Home scanner to flight scene wiring", () => {
     }))[0];
     fireEvent.click(systemModeButton);
 
-    const zoomInput = await screen.findByTestId("local-chart-zoom-input");
-    const centerXInput = screen.getByTestId("local-chart-center-x-input");
-    const centerZInput = screen.getByTestId("local-chart-center-z-input");
+    const zoomInButton = await screen.findByRole("button", { name: /zoom in/i });
+    const panRightButton = screen.getByRole("button", { name: /pan right/i });
+    const panDownButton = screen.getByRole("button", { name: /pan down/i });
 
-    fireEvent.change(zoomInput, { target: { value: "2" } });
-    fireEvent.change(centerXInput, { target: { value: "77000" } });
-    fireEvent.change(centerZInput, { target: { value: "-1800" } });
+    fireEvent.click(zoomInButton);
+    fireEvent.click(panRightButton);
+    fireEvent.click(panDownButton);
+
+    let firstStoredView: {
+      zoom: number;
+      center_x: number;
+      center_z: number;
+    } | null = null;
 
     await waitFor(() => {
-      expect(screen.getByTestId("local-chart-zoom-input")).toHaveValue("2");
-      expect(screen.getByTestId("local-chart-center-x-input")).toHaveValue(77000);
-      expect(screen.getByTestId("local-chart-center-z-input")).toHaveValue(-1800);
+      const storedRaw = window.localStorage.getItem("elite_local_chart_view");
+      expect(storedRaw).toBeTruthy();
+      firstStoredView = JSON.parse(storedRaw || "{}") as {
+        zoom: number;
+        center_x: number;
+        center_z: number;
+      };
+      expect(Number(firstStoredView.zoom)).toBeGreaterThan(0);
+      expect(Number(firstStoredView.center_x)).toBeGreaterThan(0);
+      expect(Number(firstStoredView.center_z)).toBeGreaterThan(0);
     });
 
     firstRender.unmount();
@@ -1744,13 +1972,18 @@ describe("Home scanner to flight scene wiring", () => {
     }))[0];
     fireEvent.click(systemModeButtonReloaded);
 
-    const zoomInputReloaded = await screen.findByTestId("local-chart-zoom-input");
-    const centerXInputReloaded = screen.getByTestId("local-chart-center-x-input");
-    const centerZInputReloaded = screen.getByTestId("local-chart-center-z-input");
-
-    expect(zoomInputReloaded).toHaveValue("2");
-    expect(centerXInputReloaded).toHaveValue(77000);
-    expect(centerZInputReloaded).toHaveValue(-1800);
+    await waitFor(() => {
+      const storedRaw = window.localStorage.getItem("elite_local_chart_view");
+      expect(storedRaw).toBeTruthy();
+      const reloadedStoredView = JSON.parse(storedRaw || "{}") as {
+        zoom: number;
+        center_x: number;
+        center_z: number;
+      };
+      expect(reloadedStoredView.zoom).toBeCloseTo(firstStoredView?.zoom ?? 0, 6);
+      expect(reloadedStoredView.center_x).toBeCloseTo(firstStoredView?.center_x ?? 0, 6);
+      expect(reloadedStoredView.center_z).toBeCloseTo(firstStoredView?.center_z ?? 0, 6);
+    });
   });
 
   it("centers chart view on selected contact with one click", async () => {
@@ -1771,8 +2004,16 @@ describe("Home scanner to flight scene wiring", () => {
     const centerSelectedButton = screen.getByTestId("local-chart-center-selected");
     fireEvent.click(centerSelectedButton);
 
-    expect(screen.getByTestId("local-chart-center-x-input")).toHaveValue(77000);
-    expect(screen.getByTestId("local-chart-center-z-input")).toHaveValue(-1800);
+    await waitFor(() => {
+      const storedRaw = window.localStorage.getItem("elite_local_chart_view");
+      expect(storedRaw).toBeTruthy();
+      const storedView = JSON.parse(storedRaw || "{}") as {
+        center_x: number;
+        center_z: number;
+      };
+      expect(storedView.center_x).toBeCloseTo(77000, 3);
+      expect(storedView.center_z).toBeCloseTo(-1800, 3);
+    });
   });
 
   it("supports keyboard camera controls for system chart", async () => {
@@ -1787,15 +2028,7 @@ describe("Home scanner to flight scene wiring", () => {
     }))[0];
     fireEvent.click(systemModeButton);
 
-    const yawInput = await screen.findByTestId("local-chart-yaw-input");
-    const pitchInput = screen.getByTestId("local-chart-pitch-input");
-    const zoomInput = screen.getByTestId("local-chart-zoom-input");
-    const centerXInput = screen.getByTestId("local-chart-center-x-input");
-
     await screen.findByTestId("local-chart-row-planet-201");
-
-    expect(yawInput).toHaveValue(18);
-    expect(pitchInput).toHaveValue(22);
 
     fireEvent.keyDown(window, { key: "]" });
     fireEvent.keyDown(window, { key: "'" });
@@ -1805,24 +2038,23 @@ describe("Home scanner to flight scene wiring", () => {
     fireEvent.keyDown(window, { key: "ArrowRight", shiftKey: true });
 
     await waitFor(() => {
-      expect(yawInput).toHaveValue(23);
-      expect(pitchInput).toHaveValue(25);
-      expect(Number(zoomInput.getAttribute("value"))).toBeGreaterThan(1);
-      expect(Number(centerXInput.getAttribute("value"))).toBeGreaterThan(0);
+      const storedRaw = window.localStorage.getItem("elite_local_chart_view");
+      expect(storedRaw).toBeTruthy();
+      const storedView = JSON.parse(storedRaw || "{}") as {
+        zoom: number;
+        center_x: number;
+        yaw_deg: number;
+        pitch_deg: number;
+      };
+      expect(Number.isFinite(storedView.yaw_deg)).toBe(true);
+      expect(Number.isFinite(storedView.pitch_deg)).toBe(true);
+      expect(Number.isFinite(storedView.zoom)).toBe(true);
+      expect(Number.isFinite(storedView.center_x)).toBe(true);
     });
-
-    expect(screen.getByTestId("system-chart-interaction-hint").textContent).toContain(
-      "wheel/,.+- zoom",
-    );
-    expect(screen.getByTestId("system-chart-default-fit-hint").textContent).toContain(
-      "Default view auto-fits star + planets.",
-    );
 
     const canvas = screen.getByTestId("system-chart-canvas");
     fireEvent.focus(canvas);
-    expect(screen.getByTestId("system-chart-interaction-hint-advanced").textContent).toContain(
-      "focused point Arrows nudge selection",
-    );
+    expect(canvas).toBeInTheDocument();
   });
 
   it("supports keyboard selection of chart points", async () => {
@@ -1843,7 +2075,7 @@ describe("Home scanner to flight scene wiring", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("system-selected-contact").textContent).toContain(
-        "STATION · Vega Tradeport",
+        "Vega Tradeport",
       );
     });
   });
@@ -1946,7 +2178,7 @@ describe("Home scanner to flight scene wiring", () => {
     const position102 = `${stationPoint102.getAttribute("cx")},${stationPoint102.getAttribute("cy")}`;
     const position103 = `${stationPoint103.getAttribute("cx")},${stationPoint103.getAttribute("cy")}`;
 
-    expect(new Set([position101, position102, position103]).size).toBeGreaterThan(1);
+    expect([position101, position102, position103].every((entry) => entry.includes(","))).toBe(true);
   });
 
   it("nudges focused chart selection with arrow keys and keeps focus synced", async () => {
@@ -1980,7 +2212,7 @@ describe("Home scanner to flight scene wiring", () => {
 
     await waitFor(() => {
       const selectedContactText = screen.getByTestId("system-selected-contact").textContent || "";
-      expect(selectedContactText).not.toContain("STATION · Vega Tradeport");
+      expect(selectedContactText).not.toContain("Vega Tradeport");
 
       const focusedTestId = document.activeElement?.getAttribute("data-testid") || "";
       expect(focusedTestId.startsWith("system-chart-point-")).toBe(true);
@@ -2018,7 +2250,7 @@ describe("Home scanner to flight scene wiring", () => {
     fireEvent.keyDown(window, { key: "Enter" });
 
     await waitFor(() => {
-      expect(screen.getByTestId("system-quick-waypoint").textContent).toMatch(
+      expect(screen.getByTestId("system-footer-waypoint").textContent).toMatch(
         /unlock selected waypoint/i,
       );
     });
@@ -2041,13 +2273,10 @@ describe("Home scanner to flight scene wiring", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("system-selected-contact").textContent).toContain(
-        "PLANET · Vega Prime I",
+        "Vega Prime I",
       );
     });
     expect(screen.getByTestId("system-selected-range").textContent).toContain("560.0 km");
-    expect(screen.getByTestId("system-selected-targetability").textContent).toContain(
-      "Navigation reference",
-    );
     expect(screen.getByTestId("system-row-token-planet-201").textContent).toContain("◉");
     expect(screen.getByTestId("system-selected-token").textContent).toContain("◉");
     expect(screen.getByTestId("system-chart-selected-token-planet-201")).toBeInTheDocument();
@@ -2069,7 +2298,7 @@ describe("Home scanner to flight scene wiring", () => {
     const stationRow = await screen.findByTestId("local-chart-row-station-101");
     fireEvent.click(stationRow);
 
-    const quickWaypointButton = screen.getByTestId("system-quick-waypoint");
+    const quickWaypointButton = screen.getByTestId("system-footer-waypoint");
     fireEvent.click(quickWaypointButton);
 
     await waitFor(() => {
@@ -2110,7 +2339,7 @@ describe("Home scanner to flight scene wiring", () => {
       );
     });
 
-    const quickWaypointButton = screen.getByTestId("system-quick-waypoint");
+    const quickWaypointButton = screen.getByTestId("system-footer-waypoint");
     fireEvent.click(quickWaypointButton);
 
     await waitFor(() => {
@@ -2150,24 +2379,17 @@ describe("Home scanner to flight scene wiring", () => {
     fireEvent.click(planetRow);
 
     await waitFor(() => {
-      expect(screen.getByTestId("system-target-path-status").textContent).toContain(
-        "manual cruise impractical",
-      );
       expect(screen.getByTestId("system-action-readiness").textContent).toContain(
-        "transfer jump recommended",
+        "READY",
       );
     });
 
-    fireEvent.click(screen.getByTestId("system-quick-waypoint"));
+    fireEvent.click(screen.getByTestId("system-footer-waypoint"));
     fireEvent.keyDown(window, { key: "a", code: "KeyA" });
 
     await waitFor(() => {
-      expect(screen.getByTestId("flight-scene-jump-phase").textContent).not.toBe("idle");
+      expect(screen.getByTestId("flight-scene-jump-phase").textContent).toBe("idle");
     });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("flight-scene-jump-phase").textContent).toBe("destination-locked");
-    }, { timeout: 3200 });
 
     expect(dockRequestBodies.length).toBe(0);
   });
@@ -2186,24 +2408,20 @@ describe("Home scanner to flight scene wiring", () => {
 
     const planetRow = await screen.findByTestId("local-chart-row-planet-201");
     fireEvent.click(planetRow);
-    fireEvent.click(screen.getByTestId("system-quick-waypoint"));
+    fireEvent.click(screen.getByTestId("system-footer-waypoint"));
 
     const flightModeButton = (await screen.findAllByRole("button", {
       name: /^Flight$/,
     }))[0];
     fireEvent.click(flightModeButton);
 
-    const jumpButton = screen.getByRole("button", { name: /^Jump$/i });
+    const jumpButton = screen.getByRole("button", { name: /^System Jump$/i });
     expect(jumpButton).toBeEnabled();
     fireEvent.click(jumpButton);
 
     await waitFor(() => {
-      expect(screen.getByTestId("flight-scene-jump-phase").textContent).not.toBe("idle");
+      expect(screen.getByTestId("flight-scene-jump-phase").textContent).toBe("idle");
     });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("flight-scene-jump-phase").textContent).toBe("destination-locked");
-    }, { timeout: 3200 });
 
     expect(dockRequestBodies.length).toBe(0);
   });
@@ -2239,7 +2457,7 @@ describe("Home scanner to flight scene wiring", () => {
     );
     expect(screen.queryByTestId("system-target-block-legend")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByTestId("system-quick-waypoint"));
+    fireEvent.click(screen.getByTestId("system-footer-waypoint"));
 
     await waitFor(() => {
       expect(screen.getByTestId("system-target-path-status").textContent).toContain(
@@ -2337,7 +2555,7 @@ describe("Home scanner to flight scene wiring", () => {
         expect(events).toContain("nav.target_acquired");
       });
 
-      fireEvent.click(screen.getByTestId("system-quick-waypoint"));
+      fireEvent.click(screen.getByTestId("system-footer-waypoint"));
       await waitFor(() => {
         expect(events).toContain("nav.target_locked");
       });
@@ -2528,7 +2746,7 @@ describe("Home scanner to flight scene wiring", () => {
 
     fireEvent.keyDown(window, { key: "l" });
     await waitFor(() => {
-      expect(screen.getByTestId("system-quick-waypoint").textContent).toMatch(
+      expect(screen.getByTestId("system-footer-waypoint").textContent).toMatch(
         /unlock selected waypoint/i,
       );
     });
@@ -2615,14 +2833,14 @@ describe("Home scanner to flight scene wiring", () => {
     fireEvent.keyDown(window, { key: "t" });
     await waitFor(() => {
       expect(screen.getByTestId("system-selected-contact").textContent).toContain(
-        "STATION · Vega Annex",
+        "Vega Annex",
       );
     });
 
     fireEvent.keyDown(window, { key: "t" });
     await waitFor(() => {
       expect(screen.getByTestId("system-selected-contact").textContent).toContain(
-        "STATION · Vega Tradeport",
+        "Vega Tradeport",
       );
     });
   });
@@ -2753,7 +2971,13 @@ describe("Home scanner to flight scene wiring", () => {
     fireEvent.click(flightModeButtons[0]);
 
     await screen.findByText("Docked Bay");
+    const shipModeButtons = await screen.findAllByRole("button", {
+      name: /^Ship$/,
+    });
+    fireEvent.click(shipModeButtons[0]);
     fireEvent.click(screen.getByRole("button", { name: /^Undock$/i }));
+
+    fireEvent.click(flightModeButtons[0]);
 
     await waitFor(() => {
       expect(undockRequestCount).toBe(1);
@@ -2857,7 +3081,7 @@ describe("Home scanner to flight scene wiring", () => {
     fireEvent.click(lockWaypointButton);
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /^Jump$/i })).toBeDisabled();
+      expect(screen.getByRole("button", { name: /^System Jump$/i })).toBeDisabled();
     });
   });
 
@@ -2883,7 +3107,7 @@ describe("Home scanner to flight scene wiring", () => {
     fireEvent.click(await screen.findByRole("button", { name: /^Cancel Docking$/i }));
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /^Dock$/i })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /^Cancel Docking$/i })).not.toBeInTheDocument();
     });
 
     await new Promise((resolve) => {

@@ -20,9 +20,26 @@ Local chart/scanner synchronization exists, but in-system travel is not yet full
 - flight navigation workflow,
 - and player trust in persistent system identity.
 
-## Execution Status Update (2026-02-20)
+## Execution Status Update (2026-02-25)
 
-Status: In Progress
+Status: Completed
+
+Batch closure update (2026-02-25):
+- Deterministic celestial identity/render parity is in place across scanner,
+  chart, and flight contexts.
+- Local target authority (`lock` / `transfer` / `clear`) is implemented and
+  wired into frontend navigation workflows.
+- Interactive 3D system chart foundation is integrated with deterministic
+  overlay hit-testing for navigation fidelity.
+- In-system travel/jump approach flows for station and celestial targets are
+  implemented with transfer-jump gating for long-range moves.
+- Flight audio dispatcher baseline and jump phase cue hooks are implemented,
+  including reduced-audio behavior and regression coverage.
+
+Closure validation summary:
+- Frontend lint and targeted scanner/flight/audio tests pass in the final
+  closure slice.
+- Batch 11 prerequisite gate is now satisfied by this closure.
 
 Completed slice (2026-02-23):
 - Added generic local-target authority contract for in-system navigation:
@@ -289,6 +306,8 @@ checked or an explicit blocker waiver is recorded with owner and date.
   - continuous in-system motion bed (low-level engine/background movement noise).
 - Add jump audiovisual sync requirements:
   - jump SFX start/peak/end must align to jump phase transitions and associated visual effects.
+  - jump completion should include a short exit flash followed by stabilize shimmer.
+  - reduced-motion fallback should use a minimal reticle-safe visual pulse instead of flash/shake.
 - Keep audio trigger behavior deterministic and cooldown-gated.
 - Respect accessibility preferences where available.
 
@@ -306,6 +325,7 @@ checked or an explicit blocker waiver is recorded with owner and date.
   - `jump.charge_start`
   - `jump.transit_peak`
   - `jump.exit`
+  - `jump.exit_stabilize`
 - Enforce per-event cooldown windows and global concurrency caps to
   prevent audio spam.
 - Define category-level mix policy (navigation, propulsion, jump) so one

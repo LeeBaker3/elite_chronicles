@@ -178,7 +178,8 @@ def test_generated_planets_are_distributed_around_star(db_session):
     db_session.add(system)
     db_session.flush()
 
-    blueprints = build_system_body_blueprints(system=system, generation_version=1)
+    blueprints = build_system_body_blueprints(
+        system=system, generation_version=1)
     planets = [item for item in blueprints if item.body_kind == "planet"]
 
     assert len(planets) >= 3

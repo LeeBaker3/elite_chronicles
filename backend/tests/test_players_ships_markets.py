@@ -1,9 +1,11 @@
+import math
 from datetime import timedelta
 
 from app.models.ship import Ship
 from app.models.ship_operation import ShipOperationLog
 from app.models.user import User
 from app.models.world import (
+    CelestialBody,
     Commodity,
     Faction,
     ShipArchetype,
@@ -195,6 +197,27 @@ def auth_headers_for(client, email: str, username: str):
     return {"Authorization": f"Bearer {token}"}
 
 
+def move_ship_to_jump_clearance(
+    db_session,
+    *,
+    ship_id: int,
+    system_id: int,
+    clearance_km: int = 240,
+) -> None:
+    """Move ship to deterministic in-system clearance for hyperspace tests."""
+
+    ship = db_session.query(Ship).filter(Ship.id == ship_id).first()
+    assert ship is not None
+    system = db_session.query(StarSystem).filter(
+        StarSystem.id == system_id).first()
+    assert system is not None
+
+    ship.position_x = int(system.position_x or 0) + int(clearance_km)
+    ship.position_y = int(system.position_y or 0)
+    ship.position_z = int(system.position_z or 0)
+    db_session.commit()
+
+
 def test_players_me_requires_auth(client):
     response = client.get("/api/players/me")
     assert response.status_code == 401
@@ -331,7 +354,8 @@ def test_dev_top_up_fuel_blocked_outside_development(client, db_session):
 
 
 def test_local_target_lock_and_transfer_for_planet(client, db_session):
-    headers = auth_headers_for(client, "localtarget@example.com", "local-target")
+    headers = auth_headers_for(
+        client, "localtarget@example.com", "local-target")
     owner = db_session.query(User).filter(
         User.email == "localtarget@example.com").first()
     assert owner is not None
@@ -676,6 +700,16 @@ def test_crash_recovery_restores_last_safe_checkpoint(client, db_session):
     undock = client.post(
         f"/api/ships/{state['ship_id']}/undock", headers=headers)
     assert undock.status_code == 200
+    move_ship_to_jump_clearance(
+        db_session,
+        ship_id=state["ship_id"],
+        system_id=state["system_id"],
+    )
+    move_ship_to_jump_clearance(
+        db_session,
+        ship_id=state["ship_id"],
+        system_id=state["system_id"],
+    )
 
     ship = db_session.query(Ship).filter(Ship.id == state["ship_id"]).first()
     assert ship is not None
@@ -736,6 +770,16 @@ def test_collision_check_applies_glancing_damage_and_logs_event(client, db_sessi
     undock = client.post(
         f"/api/ships/{state['ship_id']}/undock", headers=headers)
     assert undock.status_code == 200
+    move_ship_to_jump_clearance(
+        db_session,
+        ship_id=state["ship_id"],
+        system_id=state["system_id"],
+    )
+    move_ship_to_jump_clearance(
+        db_session,
+        ship_id=state["ship_id"],
+        system_id=state["system_id"],
+    )
 
     collision = client.post(
         f"/api/ships/{state['ship_id']}/collision-check",
@@ -933,7 +977,9 @@ def test_collision_check_suppresses_locked_station_impact_during_docking_approac
     assert payload["severity"] == "none"
     assert payload["object_type"] == "station"
     assert payload["object_id"] == f"station-{target_station.id}"
-    assert payload["message"].startswith("Docking computer safety corridor active")
+    assert payload["message"].startswith(
+        "Docking computer safety corridor active")
+
 
 def test_ship_ops_forbid_non_owner(client, db_session):
     owner_headers = auth_headers_for(client, "owner@example.com", "owner")
@@ -965,6 +1011,11 @@ def test_ship_jump_updates_location_and_fuel(client, db_session):
     undock = client.post(
         f"/api/ships/{state['ship_id']}/undock", headers=headers)
     assert undock.status_code == 200
+    move_ship_to_jump_clearance(
+        db_session,
+        ship_id=state["ship_id"],
+        system_id=state["system_id"],
+    )
 
     jump = client.post(
         f"/api/ships/{state['ship_id']}/jump",
@@ -977,6 +1028,7 @@ def test_ship_jump_updates_location_and_fuel(client, db_session):
     assert payload["docked_station_id"] is None
     assert payload["fuel_current"] == 10
     assert payload["flight_phase"] == "arrived"
+    assert payload["flight_locked_destination_station_id"] is None
 
     db_session.refresh(owner)
     destination_station = (
@@ -996,7 +1048,7 @@ def test_ship_jump_updates_location_and_fuel(client, db_session):
     jump_entry = next(
         entry for entry in operations.json() if entry["operation"] == "jump"
     )
-    assert "Jumped into Core System near Core Station B" in jump_entry["details"]
+    assert "safe emergence point" in jump_entry["details"]
 
 
 def test_ship_jump_accepts_destination_system_id(client, db_session):
@@ -1009,6 +1061,11 @@ def test_ship_jump_accepts_destination_system_id(client, db_session):
     undock = client.post(
         f"/api/ships/{state['ship_id']}/undock", headers=headers)
     assert undock.status_code == 200
+    move_ship_to_jump_clearance(
+        db_session,
+        ship_id=state["ship_id"],
+        system_id=state["system_id"],
+    )
 
     destination_station = (
         db_session.query(Station)
@@ -1026,19 +1083,78 @@ def test_ship_jump_accepts_destination_system_id(client, db_session):
     payload = jump.json()
     assert payload["status"] == "in-space"
     assert payload["docked_station_id"] is None
-    locked_station_id = payload["flight_locked_destination_station_id"]
-    assert isinstance(locked_station_id, int)
-    anchor_station = (
-        db_session.query(Station)
-        .filter(Station.id == locked_station_id)
-        .first()
-    )
-    assert anchor_station is not None
-    assert anchor_station.system_id == destination_station.system_id
+    assert payload["flight_locked_destination_station_id"] is None
 
     db_session.refresh(owner)
     assert owner.location_type == "deep-space"
     assert owner.location_id == destination_station.system_id
+
+
+def test_ship_jump_emergence_respects_100000km_exclusion(client, db_session):
+    headers = auth_headers_for(client, "jumpsafe@example.com", "jumpsafe")
+    owner = db_session.query(User).filter(
+        User.email == "jumpsafe@example.com").first()
+    assert owner is not None
+    state = seed_core_state(db_session, owner_user_id=owner.id)
+
+    undock = client.post(
+        f"/api/ships/{state['ship_id']}/undock", headers=headers)
+    assert undock.status_code == 200
+    move_ship_to_jump_clearance(
+        db_session,
+        ship_id=state["ship_id"],
+        system_id=state["system_id"],
+    )
+
+    jump = client.post(
+        f"/api/ships/{state['ship_id']}/jump",
+        json={"destination_station_id": state["station_2_id"]},
+        headers=headers,
+    )
+    assert jump.status_code == 200
+
+    ship = db_session.query(Ship).filter(Ship.id == state["ship_id"]).first()
+    assert ship is not None
+    system = db_session.query(StarSystem).filter(
+        StarSystem.id == state["system_id"]).first()
+    assert system is not None
+
+    exclusion_points: list[tuple[int, int, int]] = [
+        (int(system.position_x or 0), int(
+            system.position_y or 0), int(system.position_z or 0))
+    ]
+
+    bodies = (
+        db_session.query(CelestialBody)
+        .filter(CelestialBody.system_id == state["system_id"])
+        .all()
+    )
+    exclusion_points.extend(
+        (int(body.position_x or 0), int(
+            body.position_y or 0), int(body.position_z or 0))
+        for body in bodies
+    )
+
+    stations = (
+        db_session.query(Station)
+        .filter(Station.system_id == state["system_id"])
+        .all()
+    )
+    exclusion_points.extend(
+        (int(station.position_x or 0), int(
+            station.position_y or 0), int(station.position_z or 0))
+        for station in stations
+    )
+
+    min_distance = min(
+        math.sqrt(
+            ((int(ship.position_x or 0) - point_x) ** 2)
+            + ((int(ship.position_y or 0) - point_y) ** 2)
+            + ((int(ship.position_z or 0) - point_z) ** 2)
+        )
+        for point_x, point_y, point_z in exclusion_points
+    )
+    assert min_distance >= 100_000
 
 
 def test_trade_loop_via_third_station_and_return_sell(
@@ -1067,6 +1183,11 @@ def test_trade_loop_via_third_station_and_return_sell(
         headers=headers,
     )
     assert undock.status_code == 200
+    move_ship_to_jump_clearance(
+        db_session,
+        ship_id=state["ship_id"],
+        system_id=state["system_id"],
+    )
 
     jump_to_third = client.post(
         f"/api/ships/{state['ship_id']}/jump",
@@ -1074,6 +1195,17 @@ def test_trade_loop_via_third_station_and_return_sell(
         headers=headers,
     )
     assert jump_to_third.status_code == 200
+
+    transfer_to_third = client.post(
+        f"/api/ships/{state['ship_id']}/local-target",
+        json={
+            "action": "transfer",
+            "contact_type": "station",
+            "contact_id": state["station_3_id"],
+        },
+        headers=headers,
+    )
+    assert transfer_to_third.status_code == 200
 
     dock_third = client.post(
         f"/api/ships/{state['ship_id']}/dock",
@@ -1101,6 +1233,11 @@ def test_trade_loop_via_third_station_and_return_sell(
         headers=headers,
     )
     assert undock_return.status_code == 200
+    move_ship_to_jump_clearance(
+        db_session,
+        ship_id=state["ship_id"],
+        system_id=state["system_id"],
+    )
 
     jump_back = client.post(
         f"/api/ships/{state['ship_id']}/jump",
@@ -1108,6 +1245,17 @@ def test_trade_loop_via_third_station_and_return_sell(
         headers=headers,
     )
     assert jump_back.status_code == 200, jump_back.text
+
+    transfer_to_first = client.post(
+        f"/api/ships/{state['ship_id']}/local-target",
+        json={
+            "action": "transfer",
+            "contact_type": "station",
+            "contact_id": state["station_1_id"],
+        },
+        headers=headers,
+    )
+    assert transfer_to_first.status_code == 200
 
     dock_back = client.post(
         f"/api/ships/{state['ship_id']}/dock",
@@ -1245,6 +1393,11 @@ def test_ship_jump_enforces_cooldown_and_reports_remaining(client, db_session):
         headers=headers,
     )
     assert first_undock.status_code == 200
+    move_ship_to_jump_clearance(
+        db_session,
+        ship_id=state["ship_id"],
+        system_id=state["system_id"],
+    )
 
     first_jump = client.post(
         f"/api/ships/{state['ship_id']}/jump",
@@ -1290,6 +1443,11 @@ def test_ship_jump_requires_sufficient_fuel(client, db_session):
     undock = client.post(
         f"/api/ships/{state['ship_id']}/undock", headers=headers)
     assert undock.status_code == 200
+    move_ship_to_jump_clearance(
+        db_session,
+        ship_id=state["ship_id"],
+        system_id=state["system_id"],
+    )
 
     jump = client.post(
         f"/api/ships/{state['ship_id']}/jump",
@@ -1478,6 +1636,11 @@ def test_ship_dock_after_jump_clears_arrived_phase(client, db_session):
         headers=headers,
     )
     assert first_undock.status_code == 200
+    move_ship_to_jump_clearance(
+        db_session,
+        ship_id=state["ship_id"],
+        system_id=state["system_id"],
+    )
 
     jump = client.post(
         f"/api/ships/{state['ship_id']}/jump",
@@ -1486,6 +1649,17 @@ def test_ship_dock_after_jump_clears_arrived_phase(client, db_session):
     )
     assert jump.status_code == 200
     assert jump.json()["flight_phase"] == "arrived"
+
+    transfer_to_station = client.post(
+        f"/api/ships/{state['ship_id']}/local-target",
+        json={
+            "action": "transfer",
+            "contact_type": "station",
+            "contact_id": state["station_2_id"],
+        },
+        headers=headers,
+    )
+    assert transfer_to_station.status_code == 200
 
     dock = client.post(
         f"/api/ships/{state['ship_id']}/dock",
@@ -1497,6 +1671,34 @@ def test_ship_dock_after_jump_clears_arrived_phase(client, db_session):
     assert dock_payload["flight_phase"] == "idle"
     assert dock_payload["flight_locked_destination_station_id"] is None
     assert dock_payload["status"] == "docked"
+
+
+def test_ship_jump_requires_100km_clearance_from_local_bodies(client, db_session):
+    headers = auth_headers_for(client, "jumpclear@example.com", "jumpclear")
+    owner = db_session.query(User).filter(
+        User.email == "jumpclear@example.com").first()
+    assert owner is not None
+    state = seed_core_state(db_session, owner_user_id=owner.id)
+
+    undock = client.post(
+        f"/api/ships/{state['ship_id']}/undock",
+        headers=headers,
+    )
+    assert undock.status_code == 200
+
+    blocked_jump = client.post(
+        f"/api/ships/{state['ship_id']}/jump",
+        json={"destination_station_id": state["station_2_id"]},
+        headers=headers,
+    )
+    assert blocked_jump.status_code == 409
+    blocked_payload = blocked_jump.json()
+    blocked_message = (
+        blocked_payload.get("error", {}).get("message")
+        or blocked_payload.get("detail")
+        or ""
+    )
+    assert "100km clearance" in blocked_message
 
 
 def test_ship_manual_arrived_update_normalizes_to_idle(client, db_session):
@@ -1526,6 +1728,71 @@ def test_ship_manual_arrived_update_normalizes_to_idle(client, db_session):
     update_payload = update.json()
     assert update_payload["flight_phase"] == "idle"
     assert update_payload["flight_locked_destination_station_id"] is None
+
+
+def test_ship_position_sync_updates_in_space_coordinates(client, db_session):
+    headers = auth_headers_for(
+        client, "positionsync@example.com", "positionsync")
+    owner = db_session.query(User).filter(
+        User.email == "positionsync@example.com"
+    ).first()
+    assert owner is not None
+    state = seed_core_state(db_session, owner_user_id=owner.id)
+
+    undock = client.post(
+        f"/api/ships/{state['ship_id']}/undock",
+        headers=headers,
+    )
+    assert undock.status_code == 200
+
+    response = client.post(
+        f"/api/ships/{state['ship_id']}/position-sync",
+        json={
+            "position_x": 1234,
+            "position_y": 5,
+            "position_z": -678,
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["position_x"] == 1234
+    assert payload["position_y"] == 5
+    assert payload["position_z"] == -678
+
+    ship = db_session.query(Ship).filter(Ship.id == state["ship_id"]).first()
+    assert ship is not None
+    assert int(ship.position_x or 0) == 1234
+    assert int(ship.position_y or 0) == 5
+    assert int(ship.position_z or 0) == -678
+
+
+def test_ship_position_sync_rejects_when_docked(client, db_session):
+    headers = auth_headers_for(
+        client, "positionsyncdocked@example.com", "positionsyncdocked")
+    owner = db_session.query(User).filter(
+        User.email == "positionsyncdocked@example.com"
+    ).first()
+    assert owner is not None
+    state = seed_core_state(db_session, owner_user_id=owner.id)
+
+    response = client.post(
+        f"/api/ships/{state['ship_id']}/position-sync",
+        json={
+            "position_x": 100,
+            "position_y": 0,
+            "position_z": 100,
+        },
+        headers=headers,
+    )
+    assert response.status_code == 409
+    error = response.json()
+    message = (
+        error.get("error", {}).get("message")
+        or error.get("detail")
+        or ""
+    )
+    assert "in-space" in message
 
 
 def test_ship_repair_and_recharge_updates_values_and_credits(client, db_session):

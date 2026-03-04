@@ -86,7 +86,7 @@ def _angle_degrees_from_point(
 
 
 def _is_planet_layout_clustered(*, system: StarSystem,
-                               planets: list[CelestialBody]) -> bool:
+                                planets: list[CelestialBody]) -> bool:
     """Return true when all planets are packed into an unrealistically small arc."""
 
     if len(planets) < 3:
@@ -293,8 +293,10 @@ def build_system_body_blueprints(
             + rng.uniform(-9, 9)
         ) % 360
         planet_phase_radians = math.radians(planet_phase_degrees)
-        planet_x = base_x + int(round(math.cos(planet_phase_radians) * orbit_anchor))
-        planet_z = base_z + int(round(math.sin(planet_phase_radians) * orbit_anchor))
+        planet_x = base_x + \
+            int(round(math.cos(planet_phase_radians) * orbit_anchor))
+        planet_z = base_z + \
+            int(round(math.sin(planet_phase_radians) * orbit_anchor))
 
         blueprints.append(
             BodyBlueprint(
@@ -315,7 +317,8 @@ def build_system_body_blueprints(
         moon_count = _moon_count_for_planet(planet_type, rng)
         moon_orbit_anchor = 0
         moon_phase_offset = rng.uniform(0, 360)
-        moon_phase_step = max(36.0, 360.0 / (moon_count + 1)) if moon_count > 0 else 0
+        moon_phase_step = max(36.0, 360.0 / (moon_count + 1)
+                              ) if moon_count > 0 else 0
         for moon_index in range(1, moon_count + 1):
             if planet_type == "gas-giant":
                 moon_orbit_anchor += rng.randint(220_000, 2_800_000)

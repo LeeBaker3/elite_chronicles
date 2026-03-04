@@ -36,3 +36,12 @@ class AdminUsersResponse(BaseModel):
 class AdminUserUpdateRequest(BaseModel):
     role: str | None = None
     status: str | None = None
+
+
+class AdminStarterLocationResponse(BaseModel):
+    preferred_system_name: str
+    selected_system_id: int | None
+    selected_system_name: str | None
+    selected_station_id: int | None
+    selected_station_name: str | None
+    used_fallback: bool

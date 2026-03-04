@@ -9,12 +9,18 @@ from app.api.deps import get_current_admin
 from app.db.session import get_db
 from app.core.config import settings
 from app.models.user import User
+from app.models.world import StarSystem
 from app.schemas.admin import (
     AdminLogEntry,
     AdminLogsResponse,
+    AdminStarterLocationResponse,
     AdminUserSummary,
     AdminUsersResponse,
     AdminUserUpdateRequest,
+)
+from app.services.starter_location_service import (
+    STARTER_SYSTEM_NAME,
+    resolve_starter_station,
 )
 
 router = APIRouter()
@@ -229,3 +235,46 @@ def get_logs(
     sliced_entries = entries[-tail:]
     next_since = sliced_entries[-1].timestamp if sliced_entries else since
     return AdminLogsResponse(entries=sliced_entries, next_since=next_since)
+
+
+@router.get("/starter-location", response_model=AdminStarterLocationResponse)
+def get_starter_location(
+    current_user: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """Return effective starter spawn location and fallback status."""
+
+    _ = current_user
+    preferred_system = (
+        db.query(StarSystem)
+        .filter(StarSystem.name == STARTER_SYSTEM_NAME)
+        .first()
+    )
+    station = resolve_starter_station(db)
+    used_fallback = (
+        preferred_system is None
+        or station is None
+        or int(station.system_id) != int(preferred_system.id)
+    )
+
+    selected_system_name = preferred_system.name if preferred_system is not None else None
+    selected_system_id = int(
+        preferred_system.id) if preferred_system is not None else None
+    if station is not None:
+        selected_system = (
+            db.query(StarSystem)
+            .filter(StarSystem.id == station.system_id)
+            .first()
+        )
+        if selected_system is not None:
+            selected_system_name = selected_system.name
+            selected_system_id = int(selected_system.id)
+
+    return AdminStarterLocationResponse(
+        preferred_system_name=STARTER_SYSTEM_NAME,
+        selected_system_id=selected_system_id,
+        selected_system_name=selected_system_name,
+        selected_station_id=int(station.id) if station is not None else None,
+        selected_station_name=station.name if station is not None else None,
+        used_fallback=used_fallback,
+    )

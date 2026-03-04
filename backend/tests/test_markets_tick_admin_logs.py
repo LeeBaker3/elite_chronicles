@@ -409,3 +409,33 @@ def test_admin_logs_rejects_invalid_since_cursor(client, db_session):
         headers=admin_headers,
     )
     assert response.status_code == 422
+
+    def test_admin_starter_location_requires_admin(client, db_session):
+        user_headers = create_user_headers(
+            client,
+            db_session,
+            "starter-user@example.com",
+            "starter-user",
+        )
+
+        response = client.get(
+            "/api/admin/starter-location", headers=user_headers)
+        assert response.status_code == 403
+
+    def test_admin_starter_location_returns_effective_selection(client, db_session):
+        admin_headers = create_user_headers(
+            client,
+            db_session,
+            "starter-admin@example.com",
+            "starter-admin",
+            role="admin",
+        )
+
+        response = client.get(
+            "/api/admin/starter-location", headers=admin_headers)
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["preferred_system_name"] == "Lave"
+        assert "selected_system_name" in payload
+        assert "selected_station_id" in payload
+        assert "used_fallback" in payload

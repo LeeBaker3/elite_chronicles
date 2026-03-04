@@ -22,6 +22,7 @@ from app.models.world import Commodity
 from app.services.celestial_generation_service import ensure_system_bodies
 from app.schemas.ships import DockRequest, JumpRequest, RechargeRequest
 from app.schemas.ships import FlightStateUpdateRequest
+from app.schemas.ships import ShipPositionSyncRequest
 from app.schemas.ships import LocalTargetIntentRequest
 from app.schemas.ships import RefuelRequest, RepairRequest, ShipResponse
 from app.schemas.ships import DevFuelTopUpRequest
@@ -34,6 +35,11 @@ from app.schemas.ships import ScannerSelectionLogRequest
 router = APIRouter()
 api_logger = logging.getLogger("api")
 JUMP_FUEL_COST = 20
+HYPERSPACE_INITIATION_MIN_CLEARANCE_KM = 100
+HYPERSPACE_EXIT_MIN_DISTANCE_KM = 100_000
+HYPERSPACE_EXIT_INITIAL_RADIUS_KM = 120_000
+HYPERSPACE_EXIT_RADIUS_STEP_KM = 50_000
+HYPERSPACE_EXIT_MAX_RADIUS_KM = 5_000_000
 HULL_REPAIR_COST_PER_POINT = 5
 SHIELD_RECHARGE_COST_PER_POINT = 2
 ENERGY_RECHARGE_COST_PER_POINT = 1
@@ -118,7 +124,8 @@ def _set_flight_state(
 ) -> None:
     """Apply normalized persisted flight state values on a ship."""
 
-    normalized_contact_type = (locked_destination_contact_type or "").strip().lower()
+    normalized_contact_type = (
+        locked_destination_contact_type or "").strip().lower()
     resolved_contact_type: str | None = (
         normalized_contact_type if normalized_contact_type in LOCAL_TARGET_CONTACT_TYPES else None
     )
@@ -419,6 +426,9 @@ def _to_ship_response(ship: Ship, db: Session) -> ShipResponse:
         fuel_current=ship.fuel_current,
         fuel_cap=ship.fuel_cap,
         cargo_capacity=ship.cargo_capacity,
+        position_x=int(ship.position_x or 0),
+        position_y=int(ship.position_y or 0),
+        position_z=int(ship.position_z or 0),
         status=ship.status,
         docked_station_id=ship.docked_station_id,
         safe_checkpoint_available=ship.last_safe_recorded_at is not None,
@@ -462,7 +472,8 @@ def _validate_flight_state_update(
             detail="Locked destination contact id must be positive",
         )
 
-    contact_type = (payload.flight_locked_destination_contact_type or "").strip().lower()
+    contact_type = (
+        payload.flight_locked_destination_contact_type or "").strip().lower()
     if bool(contact_type) != bool(payload.flight_locked_destination_contact_id):
         raise HTTPException(
             status_code=422,
@@ -603,9 +614,11 @@ def _resolve_local_target_contact(
 
     normalized_type = contact_type.strip().lower()
     if normalized_type not in LOCAL_TARGET_CONTACT_TYPES:
-        raise HTTPException(status_code=422, detail="Unsupported local target contact type")
+        raise HTTPException(
+            status_code=422, detail="Unsupported local target contact type")
     if contact_id <= 0:
-        raise HTTPException(status_code=422, detail="Local target contact id must be positive")
+        raise HTTPException(
+            status_code=422, detail="Local target contact id must be positive")
 
     if normalized_type == "station":
         station = (
@@ -617,7 +630,8 @@ def _resolve_local_target_contact(
             .first()
         )
         if station is None:
-            raise HTTPException(status_code=404, detail="Target station not found in current system")
+            raise HTTPException(
+                status_code=404, detail="Target station not found in current system")
         return (
             station.name,
             int(station.position_x or 0),
@@ -636,7 +650,8 @@ def _resolve_local_target_contact(
         .first()
     )
     if body is None:
-        raise HTTPException(status_code=404, detail="Target celestial body not found in current system")
+        raise HTTPException(
+            status_code=404, detail="Target celestial body not found in current system")
     return (
         body.name,
         int(body.position_x or 0),
@@ -678,6 +693,229 @@ def _distance_between_points(
     delta_y = int(target_y) - int(source_y)
     delta_z = int(target_z) - int(source_z)
     return math.sqrt((delta_x * delta_x) + (delta_y * delta_y) + (delta_z * delta_z))
+
+
+def _hyperspace_exit_exclusion_points(
+    *,
+    system: StarSystem,
+    db: Session,
+) -> list[tuple[int, int, int]]:
+    """Return exclusion center points for hyperspace emergence validation."""
+
+    points: list[tuple[int, int, int]] = [
+        (
+            int(system.position_x or 0),
+            int(system.position_y or 0),
+            int(system.position_z or 0),
+        )
+    ]
+
+    bodies = (
+        db.query(CelestialBody)
+        .filter(
+            CelestialBody.system_id == system.id,
+            CelestialBody.body_kind.in_(["star", "planet", "moon"]),
+        )
+        .all()
+    )
+    for body in bodies:
+        points.append(
+            (
+                int(body.position_x or 0),
+                int(body.position_y or 0),
+                int(body.position_z or 0),
+            )
+        )
+
+    stations = (
+        db.query(Station)
+        .filter(Station.system_id == system.id)
+        .all()
+    )
+    for station in stations:
+        points.append(
+            (
+                int(station.position_x or 0),
+                int(station.position_y or 0),
+                int(station.position_z or 0),
+            )
+        )
+
+    return points
+
+
+def _nearest_hyperspace_clearance_contact(
+    *,
+    ship: Ship,
+    system: StarSystem,
+    db: Session,
+) -> tuple[str, float] | None:
+    """Return nearest station/celestial contact used for jump clearance gate."""
+
+    ship_x = int(ship.position_x or 0)
+    ship_y = int(ship.position_y or 0)
+    ship_z = int(ship.position_z or 0)
+
+    nearest_label: str | None = None
+    nearest_distance: float | None = None
+
+    def consider_contact(
+        *,
+        label: str,
+        point_x: int,
+        point_y: int,
+        point_z: int,
+    ) -> None:
+        nonlocal nearest_label, nearest_distance
+
+        distance = _distance_between_points(
+            source_x=ship_x,
+            source_y=ship_y,
+            source_z=ship_z,
+            target_x=point_x,
+            target_y=point_y,
+            target_z=point_z,
+        )
+        if nearest_distance is None or distance < nearest_distance:
+            nearest_label = label
+            nearest_distance = distance
+
+    consider_contact(
+        label=f"star {system.name}",
+        point_x=int(system.position_x or 0),
+        point_y=int(system.position_y or 0),
+        point_z=int(system.position_z or 0),
+    )
+
+    bodies = (
+        db.query(CelestialBody)
+        .filter(
+            CelestialBody.system_id == system.id,
+            CelestialBody.body_kind.in_(["star", "planet", "moon"]),
+        )
+        .all()
+    )
+    for body in bodies:
+        consider_contact(
+            label=f"{body.body_kind} {body.name}",
+            point_x=int(body.position_x or 0),
+            point_y=int(body.position_y or 0),
+            point_z=int(body.position_z or 0),
+        )
+
+    stations = (
+        db.query(Station)
+        .filter(Station.system_id == system.id)
+        .all()
+    )
+    for station in stations:
+        consider_contact(
+            label=f"station {station.name}",
+            point_x=int(station.position_x or 0),
+            point_y=int(station.position_y or 0),
+            point_z=int(station.position_z or 0),
+        )
+
+    if nearest_label is None or nearest_distance is None:
+        return None
+    return nearest_label, nearest_distance
+
+
+def _enforce_hyperspace_initiation_clearance(
+    *,
+    ship: Ship,
+    system: StarSystem,
+    db: Session,
+) -> None:
+    """Enforce minimum 100km clearance from local bodies/stations before jump."""
+
+    nearest_contact = _nearest_hyperspace_clearance_contact(
+        ship=ship,
+        system=system,
+        db=db,
+    )
+    if nearest_contact is None:
+        return
+
+    nearest_label, nearest_distance = nearest_contact
+    if nearest_distance >= float(HYPERSPACE_INITIATION_MIN_CLEARANCE_KM):
+        return
+
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            "Hyperspace jump requires at least "
+            f"{HYPERSPACE_INITIATION_MIN_CLEARANCE_KM}km clearance; "
+            f"nearest {nearest_label} is {int(round(nearest_distance))}km away"
+        ),
+    )
+
+
+def _hyperspace_exit_is_safe(
+    *,
+    candidate_x: int,
+    candidate_y: int,
+    candidate_z: int,
+    exclusion_points: list[tuple[int, int, int]],
+) -> bool:
+    """Return whether candidate hyperspace exit point satisfies exclusion rules."""
+
+    for point_x, point_y, point_z in exclusion_points:
+        distance = _distance_between_points(
+            source_x=candidate_x,
+            source_y=candidate_y,
+            source_z=candidate_z,
+            target_x=point_x,
+            target_y=point_y,
+            target_z=point_z,
+        )
+        if distance < float(HYPERSPACE_EXIT_MIN_DISTANCE_KM):
+            return False
+    return True
+
+
+def _resolve_hyperspace_exit_point(
+    *,
+    ship: Ship,
+    system: StarSystem,
+    db: Session,
+) -> tuple[int, int, int]:
+    """Resolve deterministic safe hyperspace exit point in destination system."""
+
+    center_x = int(system.position_x or 0)
+    center_y = int(system.position_y or 0)
+    center_z = int(system.position_z or 0)
+    exclusion_points = _hyperspace_exit_exclusion_points(system=system, db=db)
+
+    seed_value = abs(int(ship.render_seed or ship.id or 1)) + \
+        (int(system.id) * 7919)
+    base_angle_deg = seed_value % 360
+
+    radius_km = HYPERSPACE_EXIT_INITIAL_RADIUS_KM
+    while radius_km <= HYPERSPACE_EXIT_MAX_RADIUS_KM:
+        for angle_step in range(72):
+            angle_deg = (base_angle_deg + (angle_step * 5)) % 360
+            angle_rad = math.radians(angle_deg)
+            candidate_x = center_x + \
+                int(round(math.cos(angle_rad) * radius_km))
+            candidate_y = center_y
+            candidate_z = center_z + \
+                int(round(math.sin(angle_rad) * radius_km))
+            if _hyperspace_exit_is_safe(
+                candidate_x=candidate_x,
+                candidate_y=candidate_y,
+                candidate_z=candidate_z,
+                exclusion_points=exclusion_points,
+            ):
+                return candidate_x, candidate_y, candidate_z
+        radius_km += HYPERSPACE_EXIT_RADIUS_STEP_KM
+
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            "No safe hyperspace emergence point available in destination system"
+        ),
+    )
 
 
 def _planet_anchor(system: StarSystem) -> tuple[int, int, int]:
@@ -888,14 +1126,49 @@ def _local_contacts_sort_key(contact: LocalScannerContact) -> tuple[int, int, st
     contact_type_priority = {
         "star": 0,
         "planet": 1,
-        "station": 2,
-        "ship": 3,
+        "moon": 2,
+        "station": 3,
+        "ship": 4,
     }
     return (
         contact_type_priority.get(contact.contact_type, 99),
         int(contact.distance_km),
         contact.id,
     )
+
+
+def _canonical_scanner_body_name(
+    *,
+    system_name: str,
+    body: CelestialBody,
+    body_by_id: dict[int, CelestialBody],
+) -> str:
+    """Return canonical scanner name for one celestial body."""
+
+    normalized_system_name = str(system_name or "Unknown system")
+    body_kind = str(body.body_kind or "").strip().lower()
+
+    if body_kind == "star":
+        return f"{normalized_system_name} Primary"
+
+    if body_kind == "planet":
+        return f"{normalized_system_name} {int(body.orbit_index or 0)}"
+
+    if body_kind == "moon":
+        moon_orbit_index = int(body.orbit_index or 0)
+        parent_body_id = int(body.parent_body_id or 0)
+        parent_planet_orbit = 0
+        if parent_body_id > 0 and parent_body_id in body_by_id:
+            parent_body = body_by_id[parent_body_id]
+            if str(parent_body.body_kind or "").strip().lower() == "planet":
+                parent_planet_orbit = int(parent_body.orbit_index or 0)
+
+        if parent_planet_orbit > 0 and moon_orbit_index > 0:
+            return f"{normalized_system_name} {parent_planet_orbit}-{moon_orbit_index}"
+
+        return f"{normalized_system_name} {parent_body_id}-{moon_orbit_index}"
+
+    return str(body.name or "Unknown body")
 
 
 def _nearest_collision_candidate(
@@ -1072,6 +1345,7 @@ def get_ship_local_contacts(
     system = _resolve_ship_system(ship, current_user, db)
     generation_version = int(system.generation_version or 1)
     bodies = ensure_system_bodies(system=system, db=db)
+    body_by_id = {int(body.id): body for body in bodies}
 
     ship_x = int(ship.position_x or 0)
     ship_y = int(ship.position_y or 0)
@@ -1079,9 +1353,9 @@ def get_ship_local_contacts(
 
     contacts: list[LocalScannerContact] = []
 
-    planets_by_body_id: dict[int, CelestialBody] = {}
+    planets_by_body_id: dict[int, str] = {}
     for body in bodies:
-        if body.body_kind not in {"star", "planet"}:
+        if body.body_kind not in {"star", "planet", "moon"}:
             continue
 
         relative_x = int(body.position_x or 0) - ship_x
@@ -1099,11 +1373,17 @@ def get_ship_local_contacts(
             contact_type=body.body_kind,
         )
 
+        body_display_name = _canonical_scanner_body_name(
+            system_name=str(system.name),
+            body=body,
+            body_by_id=body_by_id,
+        )
+
         contacts.append(
             LocalScannerContact(
                 id=f"{body.body_kind}-{body.id}",
                 contact_type=body.body_kind,
-                name=body.name,
+                name=body_display_name,
                 distance_km=distance_km,
                 bearing_x=bearing_x,
                 bearing_y=bearing_y,
@@ -1119,7 +1399,7 @@ def get_ship_local_contacts(
         )
 
         if body.body_kind == "planet":
-            planets_by_body_id[int(body.id)] = body
+            planets_by_body_id[int(body.id)] = body_display_name
 
     stations = (
         db.query(Station)
@@ -1175,7 +1455,7 @@ def get_ship_local_contacts(
                 orbit_radius_km=station.orbit_radius_km,
                 orbit_phase_deg=station.orbit_phase_deg,
                 orbiting_planet_name=(
-                    planets_by_body_id.get(int(station.host_body_id)).name
+                    planets_by_body_id.get(int(station.host_body_id))
                     if station.host_body_id is not None
                     and int(station.host_body_id) in planets_by_body_id
                     else None
@@ -1429,9 +1709,12 @@ def undock_ship(
     origin_system_id: int | None = None
     if origin_station is not None:
         origin_system_id = int(origin_station.system_id)
-        ship.position_x = int(origin_station.position_x or 0) + UNDOCK_EXIT_OFFSET_X_KM
-        ship.position_y = int(origin_station.position_y or 0) + UNDOCK_EXIT_OFFSET_Y_KM
-        ship.position_z = int(origin_station.position_z or 0) + UNDOCK_EXIT_OFFSET_Z_KM
+        ship.position_x = int(
+            origin_station.position_x or 0) + UNDOCK_EXIT_OFFSET_X_KM
+        ship.position_y = int(
+            origin_station.position_y or 0) + UNDOCK_EXIT_OFFSET_Y_KM
+        ship.position_z = int(
+            origin_station.position_z or 0) + UNDOCK_EXIT_OFFSET_Z_KM
     ship.docked_station_id = None
     _set_flight_state(
         ship=ship,
@@ -1743,6 +2026,11 @@ def jump_ship(
                     f"({cooldown_remaining_seconds}s remaining)"
                 ),
             )
+        _enforce_hyperspace_initiation_clearance(
+            ship=ship,
+            system=current_system,
+            db=db,
+        )
 
     if ship.fuel_current < fuel_cost:
         raise HTTPException(
@@ -1751,14 +2039,29 @@ def jump_ship(
     ship.fuel_current -= fuel_cost
     ship.status = "in-space"
     ship.docked_station_id = None
+
+    if is_local_approach:
+        locked_destination_station_id = destination_station.id
+        ship.position_x = destination_station.position_x + 18
+        ship.position_y = destination_station.position_y + 6
+        ship.position_z = destination_station.position_z + 18
+    else:
+        locked_destination_station_id = None
+        (
+            ship.position_x,
+            ship.position_y,
+            ship.position_z,
+        ) = _resolve_hyperspace_exit_point(
+            ship=ship,
+            system=destination_system,
+            db=db,
+        )
+
     _set_flight_state(
         ship=ship,
         phase=FlightPhase.ARRIVED,
-        locked_destination_station_id=destination_station.id,
+        locked_destination_station_id=locked_destination_station_id,
     )
-    ship.position_x = destination_station.position_x + 18
-    ship.position_y = destination_station.position_y + 6
-    ship.position_z = destination_station.position_z + 18
     ship.version = (ship.version or 0) + 1
 
     current_user.location_type = "deep-space"
@@ -1774,9 +2077,17 @@ def jump_ship(
         operation="jump",
         cost_credits=0,
         details=(
-            f"Jumped into {destination_system.name} near "
-            f"{_format_station_label(destination_station.id, destination_station.name)}; fuel cost "
-            f"{fuel_cost}"
+            (
+                f"Local transfer jump near "
+                f"{_format_station_label(destination_station.id, destination_station.name)}; "
+                f"fuel cost {fuel_cost}"
+            )
+            if is_local_approach
+            else (
+                f"Jumped into {destination_system.name} at safe emergence point "
+                f"(>= {HYPERSPACE_EXIT_MIN_DISTANCE_KM}km from local bodies); "
+                f"fuel cost {fuel_cost}"
+            )
         ),
         db=db,
     )
@@ -2231,6 +2542,33 @@ def update_flight_state(
         locked_destination_contact_type=locked_destination_contact_type,
         locked_destination_contact_id=locked_destination_contact_id,
     )
+    ship.version = (ship.version or 0) + 1
+
+    db.commit()
+    db.refresh(ship)
+    return _to_ship_response(ship, db)
+
+
+@router.post("/{ship_id}/position-sync", response_model=ShipResponse)
+def sync_ship_position(
+    ship_id: int,
+    payload: ShipPositionSyncRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Persist ship position updates during active in-space flight."""
+
+    ship = _get_ship_for_user(ship_id, current_user, db)
+
+    if ship.status != "in-space":
+        raise HTTPException(
+            status_code=409,
+            detail="Ship must be in-space for position sync",
+        )
+
+    ship.position_x = int(payload.position_x)
+    ship.position_y = int(payload.position_y)
+    ship.position_z = int(payload.position_z)
     ship.version = (ship.version or 0) + 1
 
     db.commit()

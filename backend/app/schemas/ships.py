@@ -34,6 +34,12 @@ class FlightStateUpdateRequest(BaseModel):
     flight_locked_destination_contact_id: int | None = None
 
 
+class ShipPositionSyncRequest(BaseModel):
+    position_x: int
+    position_y: int
+    position_z: int
+
+
 class LocalTargetIntentRequest(BaseModel):
     action: Literal["lock", "transfer", "clear"] = "lock"
     contact_type: LocalTargetContactType | None = None
@@ -92,6 +98,9 @@ class ShipResponse(BaseModel):
     fuel_current: int
     fuel_cap: int
     cargo_capacity: int
+    position_x: int
+    position_y: int
+    position_z: int
     status: str
     docked_station_id: int | None
     safe_checkpoint_available: bool

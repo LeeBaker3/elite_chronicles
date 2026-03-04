@@ -53,7 +53,7 @@ describe("FlightAudioAdapter", () => {
         const result = adapter.play("nav.target_acquired");
 
         expect(result).toBe("played");
-        expect(fakeContext.createGain).toHaveBeenCalledTimes(1);
+        expect(fakeContext.createGain).toHaveBeenCalledTimes(2);
         expect(fakeContext.createOscillator).toHaveBeenCalledTimes(1);
     });
 
@@ -116,7 +116,11 @@ describe("FlightAudioAdapter", () => {
             factory,
         );
 
-        const events: FlightAudioEventName[] = ["nav.approach_ready", "jump.exit"];
+        const events: FlightAudioEventName[] = [
+            "nav.approach_ready",
+            "jump.exit",
+            "jump.exit_stabilize",
+        ];
         events.forEach((eventName) => {
             adapter.play(eventName);
         });
