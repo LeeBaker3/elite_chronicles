@@ -7,6 +7,13 @@ Owner: Product + Frontend + Backend
 
 Provide one authoritative mapping for Batch 12 SFX events across Batch 01–09 features.
 
+## Implementation Status (2026-03-04)
+
+- Canonical event keys in this table are wired in frontend dispatcher flows.
+- Local-chart backend hint keys use canonical chart/ops/flight names.
+- Asset policy: each event key resolves to a unique file under `frontend/public/audio/sfx/`.
+- Manifest source: `frontend/src/components/audio/audioManifest.ts`.
+
 ## Event Naming Rules
 
 - Format: `domain.action[_result]`
@@ -74,3 +81,4 @@ Provide one authoritative mapping for Batch 12 SFX events across Batch 01–09 f
 - Cooldown values are baseline defaults and should be tuned with QA.
 - Loop events (`engine_loop_start`, `docked_bay_ambience_start`) should be managed by explicit start/stop state transitions, not repeated trigger spam.
 - Additive-only rule: new keys can be added; existing keys should not be renamed after adoption.
+- Canonical design reference: `prd/design/core-audio-sfx-design.md`.

@@ -758,6 +758,7 @@ Phase 5: Expanded Universe
 15.8 Audio SFX Coverage + Settings Batch
 - See [batch-12-audio-sfx-coverage-settings-plan.md](batch-12-audio-sfx-coverage-settings-plan.md) for cross-batch (01-09) audio special-effects coverage and configurable audio controls in settings.
 - Batch 12 item: use [batch-12-audio-event-key-table.md](batch-12-audio-event-key-table.md) as the canonical event-key mapping for implementation.
+- Design reference: [design/core-audio-sfx-design.md](design/core-audio-sfx-design.md) for file-based SFX architecture and event-to-asset mapping rules.
 
 15.9 Collision Outcomes + Escape Capsule + Rescue Batch
 - See [batch-13-collision-outcomes-damage-sfx-plan.md](batch-13-collision-outcomes-damage-sfx-plan.md) for collision outcome depth, impact feedback, and escape capsule/rescue branches.

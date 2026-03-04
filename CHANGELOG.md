@@ -8,6 +8,9 @@ All notable changes to this project are documented in this file.
 - Cross-batch core design governance and living design artifacts under
   `prd/design/`, including a canonical system index, reusable template,
   per-system design docs, and a code-truth implementation audit snapshot.
+- Batch 12 governance alignment updates: canonical `prd/design` audio design
+  doc, Batch 12 plan/core-design alignment sections, and PRD design-reference
+  link update for audio SFX architecture.
 - Shared UI foundation primitives: `Tooltip`, `ToastProvider`, and `DataState`.
 - Frontend unit test setup with Vitest + Testing Library.
 - Primitive unit tests for `Tooltip`, `ToastProvider`, and `DataState`.

@@ -1,6 +1,6 @@
 # Batch 12 Implementation Plan — Audio SFX Coverage (Batch 01–09) + Settings Menu Controls
 
-Date: 2026-02-19  
+Date: 2026-03-04  
 Owner: Product + Frontend + Backend
 
 ## Objective
@@ -22,9 +22,42 @@ Adding structured SFX now improves:
 - immersion across docked, flight, scanner, trade, comms, and safety flows,
 without changing core mechanics.
 
-## Execution Status Update (2026-02-20)
+## PRD Alignment (Required)
 
-Status: Planned
+### PRD Mapping
+
+| Batch Item | PRD Section | Requirement/Story Link | Notes |
+|---|---|---|---|
+| Cross-batch SFX coverage for Batch 01-09 actions | 15.8 | Audio feedback and readability requirements | Additive event-key catalog and trigger wiring |
+| Settings menu audio controls and persistence | 10, 12, 16 | UX settings + accessibility + acceptance checks | Non-blocking controls and persistent defaults |
+| Audio architecture and mapping policy | 15.8 | Batch 12 implementation references | File-based manifest and stable event taxonomy |
+
+## Core Design Alignment (Required)
+
+### Design Doc References
+
+- Canonical index: `prd/design/core-system-design-index.md`
+- Impacted design docs:
+  - `prd/design/core-audio-sfx-design.md`
+  - `prd/design/core-flight-navigation-design.md`
+  - `prd/design/core-comms-design.md`
+  - `prd/design/core-admin-ops-design.md`
+
+### Design Alignment Rules
+
+- Update impacted design docs in the same PR as behavior or audio contract changes.
+- Keep key naming additive; never rename existing event keys after adoption.
+- Keep event-to-asset mapping file-based and centralized in manifest/dispatcher paths.
+
+## Execution Status Update (2026-03-04)
+
+Status: Implemented
+
+Implementation notes:
+- Frontend dispatcher now covers canonical Batch 12 event keys across ops/trade/comms/admin/flight/scanner/chart/collision flows.
+- Backend local-chart hint keys were updated to canonical chart/flight/ops event names.
+- Media SFX assets are file-based in `frontend/public/audio/sfx/` with one unique file path per event key (no embedded WAV/base64 generation in page code).
+- See [design/core-audio-sfx-design.md](design/core-audio-sfx-design.md) for architecture and maintenance rules.
 
 ## Review Summary — Batch 01–09 Audio Targets
 
@@ -208,6 +241,7 @@ Status: Planned
 - Settings menu audio section implementation.
 - Dispatcher utility with tests.
 - QA checklist for Batch 01–09 audio coverage verification.
+- File-based SFX manifest + unique per-event audio assets with swap-only update path.
 
 ## Batch 12 Item — Audio Event Key Table
 
@@ -219,3 +253,10 @@ Status: Planned
   - default audio category,
   - cooldown guidance,
   - user-setting channel mapping.
+
+## Documentation Update Checklist
+
+- [x] `prd/prd.md` reviewed/updated for Batch 12 design reference path.
+- [x] `prd/design/core-system-design-index.md` updated with audio system row.
+- [x] `prd/design/core-audio-sfx-design.md` maintained as canonical Batch 12 design reference.
+- [x] Batch 12 plan reflects required PRD + Core Design alignment sections.
