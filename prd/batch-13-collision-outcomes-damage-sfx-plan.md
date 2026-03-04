@@ -1,6 +1,6 @@
 # Batch 13 Implementation Plan — Collision Outcomes, Damage Model, and Impact SFX
 
-Date: 2026-02-19  
+Date: 2026-03-04  
 Owner: Product + Backend + Frontend
 
 ## Objective
@@ -30,9 +30,34 @@ Current collision behavior is useful for warnings but not yet a full gameplay sy
 | Escape capsule and rescue branch | 5.4, 5.13 | Survival path after destruction | Pickup or station transfer |
 | Impact SFX/feedback | 10, 11 | Readability and feedback quality | Cooldown and accessibility-safe |
 
+## Core Design Alignment (Required)
+
+- Core Flight Navigation design: [prd/design/core-flight-navigation-design.md](prd/design/core-flight-navigation-design.md)
+  - Aligns waypoint lock, transit phase, and jump-state event semantics.
+- Core Combat & Recovery design: [prd/design/core-combat-recovery-design.md](prd/design/core-combat-recovery-design.md)
+  - Aligns collision outcome severity, damage progression, destruction, and recovery semantics.
+- Core Audio SFX design: [prd/design/core-audio-sfx-design.md](prd/design/core-audio-sfx-design.md)
+  - Aligns event-key naming, playback constraints, accessibility behavior, and asset governance.
+
+Implementation rule for this batch:
+- Any change to collision/damage/audio behavior must update the corresponding
+  core design docs in the same PR (or include explicit rationale and a linked
+  follow-up if deferred).
+
 ## Execution Status Update (2026-02-20)
 
 Status: Planned
+
+## Readiness Checklist
+
+- [ ] PRD mapping validated for all in-scope items.
+- [ ] Core design alignment validated (`core-flight-navigation`,
+      `core-combat-recovery`, `core-audio-sfx`).
+- [ ] Additive API/contract changes drafted with backward compatibility notes.
+- [ ] Backend test plan drafted for outcome matrix + damage sequencing.
+- [ ] Frontend test plan drafted for state transitions + feedback rendering.
+- [ ] Audio validation pass criteria defined (cooldowns/concurrency/accessibility).
+- [ ] Telemetry and log fields defined for collision observability.
 
 ## In Scope
 
@@ -181,6 +206,32 @@ Status: Planned
   - Mitigation: cooldown windows, grouping, and concurrency caps.
 - Risk: Client/server divergence in collision outcomes.
   - Mitigation: backend-authoritative resolution plus explicit client event contracts.
+
+## Test and Validation Evidence
+
+- Planned backend evidence:
+  - Collision resolver unit tests per contact type (`star`, `planet`,
+    `station`, `ship`).
+  - Damage pipeline sequencing tests (shield before hull, destruction thresholds,
+    recovery branch triggers).
+  - Contract tests for additive collision/audio payload fields.
+- Planned frontend evidence:
+  - UI state tests for warning/glancing/critical/destruction transitions.
+  - Audio event dispatch tests for collision and recovery event keys.
+  - Accessibility checks for reduced-audio behavior and safe fallbacks.
+- Manual evidence:
+  - Scenario pass for low/medium/high velocity impacts,
+  - Star overheat progression verification,
+  - Escape capsule + rescue outcome flow verification.
+
+## Documentation Update Checklist
+
+- [ ] Update [CHANGELOG.md](CHANGELOG.md) with Batch 13 behavior/design deltas.
+- [ ] Update relevant core design docs in [prd/design](prd/design)
+      (`core-combat-recovery-design`, `core-flight-navigation-design`,
+      `core-audio-sfx-design`) when implementation changes land.
+- [ ] Update PRD references if scope/contract changes exceed mapped sections.
+- [ ] Add or update runbook/testing notes in backend/frontend README files.
 
 ## Sound Effects Requirement for Batch Documents (New Standard)
 

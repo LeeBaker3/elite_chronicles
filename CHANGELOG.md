@@ -5,6 +5,10 @@ All notable changes to this project are documented in this file.
 ## [Unreleased] - 2026-02-13
 
 ### Added
+- Batch 13 planning-governance alignment updates in
+  [prd/batch-13-collision-outcomes-damage-sfx-plan.md](prd/batch-13-collision-outcomes-damage-sfx-plan.md), including required Core Design Alignment,
+  Readiness Checklist, Test and Validation Evidence, and Documentation Update
+  Checklist sections.
 - Manifest-backed frontend media SFX system with canonical event-key mapping,
   file-based audio resolver, and integrity tests:
   - `frontend/src/components/audio/audioManifest.ts`
