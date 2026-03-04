@@ -5,6 +5,9 @@ All notable changes to this project are documented in this file.
 ## [Unreleased] - 2026-02-13
 
 ### Added
+- Cross-batch core design governance and living design artifacts under
+  `prd/design/`, including a canonical system index, reusable template,
+  per-system design docs, and a code-truth implementation audit snapshot.
 - Shared UI foundation primitives: `Tooltip`, `ToastProvider`, and `DataState`.
 - Frontend unit test setup with Vitest + Testing Library.
 - Primitive unit tests for `Tooltip`, `ToastProvider`, and `DataState`.

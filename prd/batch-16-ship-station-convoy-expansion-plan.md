@@ -1,6 +1,6 @@
 # Batch 16 Implementation Plan — Ship/Station Archetype Expansion + Cargo Convoys
 
-Date: 2026-02-25  
+Date: 2026-03-04  
 Owner: Product + Backend + Frontend
 
 ## Objective
@@ -26,15 +26,35 @@ Owner: Product + Backend + Frontend
 | Additional station archetypes | 5.7, Appendix A | Station identity and service variety | Distinct service profiles |
 | Cargo convoy simulation | 5.6 | NPC trade fleets and dynamic price impact | System-level flow visibility |
 
-## Execution Status Update (2026-02-25)
+## Core Design Alignment (Required)
+
+### Design Doc References
+
+- Canonical index: `prd/design/core-system-design-index.md`
+- Impacted design docs:
+  - `prd/design/core-flight-navigation-design.md`
+  - `prd/design/core-stations-locations-design.md`
+  - `prd/design/core-economy-market-design.md`
+
+### Design Alignment Rules
+
+- Update impacted design docs in the same PR as behavior changes.
+- Keep changes additive and cross-batch; avoid one-off design files.
+- If scope expands beyond current design docs, add a new core/integration
+  doc and register it in the canonical index.
+
+## Execution Status Update (2026-03-04)
 
 Status: Planned
+- Governance Update: Completed (core design alignment integrated).
+- Implementation Readiness: Pending (readiness checklist not yet complete).
 
 ## Readiness Checklist (Pre-Implementation Gate)
 
 - [ ] Archetype compatibility matrix defined (ship, station, services).
 - [ ] Convoy route model and risk model documented.
 - [ ] Economy integration hooks approved.
+- [ ] Impacted `prd/design/` docs are reviewed and linked.
 
 ## In Scope
 
@@ -123,4 +143,6 @@ Status: Planned
 ## Documentation Update Checklist
 
 - [ ] `prd/prd.md` reviewed for alignment.
+- [ ] `prd/design/core-system-design-index.md` reviewed for impacted docs.
+- [ ] Impacted `prd/design/*.md` docs updated in this batch.
 - [ ] Batch status and acceptance evidence updated.

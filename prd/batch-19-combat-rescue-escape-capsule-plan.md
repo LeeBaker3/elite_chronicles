@@ -1,6 +1,6 @@
 # Batch 19 Implementation Plan — Combat Completion + Escape Capsule + Rescue Outcomes
 
-Date: 2026-02-25  
+Date: 2026-03-04  
 Owner: Product + Backend + Frontend
 
 ## Objective
@@ -26,15 +26,35 @@ Owner: Product + Backend + Frontend
 | Escape pod / survival outcomes | 5.4, 5.13, 5.14 | Player destruction/recovery acceptance | Ejection + rescue branches |
 | Recovery and persistence | 5.13 | Safe-state continuity | Inventory/penalty policy |
 
-## Execution Status Update (2026-02-25)
+## Core Design Alignment (Required)
+
+### Design Doc References
+
+- Canonical index: `prd/design/core-system-design-index.md`
+- Impacted design docs:
+  - `prd/design/core-combat-recovery-design.md`
+  - `prd/design/core-player-state-design.md`
+  - `prd/design/core-flight-navigation-design.md`
+
+### Design Alignment Rules
+
+- Update impacted design docs in the same PR as behavior changes.
+- Keep changes additive and cross-batch; avoid one-off design files.
+- If scope expands beyond current design docs, add a new core/integration
+  doc and register it in the canonical index.
+
+## Execution Status Update (2026-03-04)
 
 Status: Planned
+- Governance Update: Completed (core design alignment integrated).
+- Implementation Readiness: Pending (readiness checklist not yet complete).
 
 ## Readiness Checklist (Pre-Implementation Gate)
 
 - [ ] Escape capsule eligibility rules defined by ship/loadout.
 - [ ] Rescue branch logic and penalties documented.
 - [ ] Persistence policy for post-destruction state approved.
+- [ ] Impacted `prd/design/` docs are reviewed and linked.
 
 ## In Scope
 
@@ -131,4 +151,6 @@ Status: Planned
 ## Documentation Update Checklist
 
 - [ ] `prd/prd.md` reviewed for alignment.
+- [ ] `prd/design/core-system-design-index.md` reviewed for impacted docs.
+- [ ] Impacted `prd/design/*.md` docs updated in this batch.
 - [ ] Batch status updated with evidence.

@@ -29,6 +29,29 @@ Every batch plan must align to `prd/prd.md`.
 - Keep scope tied to existing PRD goals unless explicitly proposing a PRD change.
 - If this batch introduces new requirements, add a "PRD Update Needed" item and include exact proposed PRD edits.
 
+## Core Design Alignment (Required)
+
+Every batch plan must align to long-lived core system design docs in
+`prd/design/`.
+
+### Design Doc References
+
+- Canonical index: `prd/design/core-system-design-index.md`
+- List all design docs impacted by this batch:
+  - `prd/design/<doc-1>.md`
+  - `prd/design/<doc-2>.md`
+
+### Design Alignment Rules
+
+- Each batch must update impacted design docs in the same PR as behavior
+  changes.
+- If no existing design doc matches new scope, create one in `prd/design/`
+  and add it to `core-system-design-index.md`.
+- Keep design docs cross-batch and cumulative; do not create one-off design
+  files inside individual batch plans.
+- If implementation diverges from a design doc, update both the design doc
+  and this batch plan's acceptance criteria.
+
 ## Execution Status Update (YYYY-MM-DD)
 
 Status: Planned | In Progress | Completed
@@ -47,6 +70,7 @@ Status: Planned | In Progress | Completed
 
 - [ ] Dependencies from prior batches are available and verified.
 - [ ] API/data contracts needed for this batch are known.
+- [ ] Impacted `prd/design/` docs are identified and linked.
 - [ ] Validation strategy and environment prerequisites are documented.
 - [ ] Risks and rollback approach are identified.
 
@@ -126,6 +150,8 @@ Example format:
 ## Documentation Update Checklist
 
 - [ ] `prd/prd.md` reviewed for alignment.
+- [ ] `prd/design/core-system-design-index.md` reviewed for impacted docs.
+- [ ] Impacted `prd/design/*.md` docs updated in this batch.
 - [ ] Batch plan updated with current status.
 - [ ] `CHANGELOG.md` updated when user-visible/dev-facing behavior changes.
 - [ ] `README.md`/`backend/README.md` updated for setup or workflow changes.

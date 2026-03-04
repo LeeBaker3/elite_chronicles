@@ -1,6 +1,6 @@
 # Batch 18 Implementation Plan — Station Narrative Gameplay + Mission Loop Expansion
 
-Date: 2026-02-25  
+Date: 2026-03-04  
 Owner: Product + Backend + Frontend
 
 ## Objective
@@ -25,15 +25,36 @@ Owner: Product + Backend + Frontend
 | Mission acquisition/turn-in flow | 5.10, 7.4 | Missions + reputation outcomes | Station-driven mission board |
 | In-station chat interaction flow | 5.9 | Local social interaction context | Station channels + NPC hooks |
 
-## Execution Status Update (2026-02-25)
+## Core Design Alignment (Required)
+
+### Design Doc References
+
+- Canonical index: `prd/design/core-system-design-index.md`
+- Impacted design docs:
+  - `prd/design/core-story-ai-design.md`
+  - `prd/design/core-missions-factions-reputation-design.md`
+  - `prd/design/core-comms-design.md`
+  - `prd/design/core-stations-locations-design.md`
+
+### Design Alignment Rules
+
+- Update impacted design docs in the same PR as behavior changes.
+- Keep changes additive and cross-batch; avoid one-off design files.
+- If scope expands beyond current design docs, add a new core/integration
+  doc and register it in the canonical index.
+
+## Execution Status Update (2026-03-04)
 
 Status: Planned
+- Governance Update: Completed (core design alignment integrated).
+- Implementation Readiness: Pending (readiness checklist not yet complete).
 
 ## Readiness Checklist (Pre-Implementation Gate)
 
 - [ ] Story state model and mission linking schema defined.
 - [ ] NPC interaction contract and moderation path finalized.
 - [ ] Reward/reputation update rules documented.
+- [ ] Impacted `prd/design/` docs are reviewed and linked.
 
 ## In Scope
 
@@ -130,4 +151,6 @@ Status: Planned
 ## Documentation Update Checklist
 
 - [ ] `prd/prd.md` reviewed for alignment.
+- [ ] `prd/design/core-system-design-index.md` reviewed for impacted docs.
+- [ ] Impacted `prd/design/*.md` docs updated in this batch.
 - [ ] Batch status updated with evidence.
