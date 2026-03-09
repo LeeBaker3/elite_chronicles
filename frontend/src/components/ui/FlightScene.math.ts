@@ -120,3 +120,67 @@ export const advanceDockingAttitude = (params: {
         pitchRadians: nextPitch,
     };
 };
+
+export type ProjectedCameraSpacePoint = {
+    depth: number;
+    ndcX: number;
+    ndcY: number;
+    inFront: boolean;
+    inView: boolean;
+};
+
+export const projectCameraSpacePointToNdc = (params: {
+    cameraSpaceX: number;
+    cameraSpaceY: number;
+    cameraSpaceZ: number;
+    verticalFovDegrees: number;
+    aspectRatio: number;
+}): ProjectedCameraSpacePoint => {
+    const {
+        cameraSpaceX,
+        cameraSpaceY,
+        cameraSpaceZ,
+        verticalFovDegrees,
+        aspectRatio,
+    } = params;
+
+    const depth = -cameraSpaceZ;
+    if (
+        !Number.isFinite(depth)
+        || depth <= 0
+        || !Number.isFinite(verticalFovDegrees)
+        || verticalFovDegrees <= 0
+        || !Number.isFinite(aspectRatio)
+        || aspectRatio <= 0
+    ) {
+        return {
+            depth,
+            ndcX: Number.POSITIVE_INFINITY,
+            ndcY: Number.POSITIVE_INFINITY,
+            inFront: false,
+            inView: false,
+        };
+    }
+
+    const halfVerticalSpan = Math.tan((verticalFovDegrees * Math.PI) / 360) * depth;
+    const halfHorizontalSpan = halfVerticalSpan * aspectRatio;
+    if (halfVerticalSpan <= 0 || halfHorizontalSpan <= 0) {
+        return {
+            depth,
+            ndcX: Number.POSITIVE_INFINITY,
+            ndcY: Number.POSITIVE_INFINITY,
+            inFront: true,
+            inView: false,
+        };
+    }
+
+    const ndcX = cameraSpaceX / halfHorizontalSpan;
+    const ndcY = cameraSpaceY / halfVerticalSpan;
+    return {
+        depth,
+        ndcX,
+        ndcY,
+        inFront: true,
+        inView: Math.abs(ndcX) <= 1 && Math.abs(ndcY) <= 1,
+    };
+};

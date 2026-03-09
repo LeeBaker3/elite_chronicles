@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 import { resolveScannerDisplayDistanceKm } from "./scannerDistance";
 
 describe("resolveScannerDisplayDistanceKm", () => {
-  it("prefers finite live distance when available", () => {
-    expect(resolveScannerDisplayDistanceKm(42, 27)).toBe(27);
+  it("prefers snapshot distance when it is available", () => {
+    expect(resolveScannerDisplayDistanceKm(42, 27)).toBe(42);
   });
 
   it("falls back to snapshot distance when live distance is missing", () => {
@@ -12,11 +12,16 @@ describe("resolveScannerDisplayDistanceKm", () => {
     expect(resolveScannerDisplayDistanceKm(42, undefined)).toBe(42);
   });
 
-  it("clamps negative live distance to zero", () => {
-    expect(resolveScannerDisplayDistanceKm(42, -5)).toBe(0);
+  it("clamps negative live distance to zero when snapshot distance is unavailable", () => {
+    expect(resolveScannerDisplayDistanceKm(0, -5)).toBe(0);
   });
 
-  it("falls back to snapshot when live distance is not finite", () => {
-    expect(resolveScannerDisplayDistanceKm(42, Number.NaN)).toBe(42);
+  it("falls back to live distance when snapshot distance is unavailable", () => {
+    expect(resolveScannerDisplayDistanceKm(0, 27)).toBe(27);
+  });
+
+  it("falls back to zero when neither snapshot nor live distance is usable", () => {
+    expect(resolveScannerDisplayDistanceKm(Number.NaN, Number.NaN)).toBe(0);
+    expect(resolveScannerDisplayDistanceKm(0, Number.NaN)).toBe(0);
   });
 });
