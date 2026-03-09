@@ -6,6 +6,10 @@ export const resolveScannerDisplayDistanceKm = (
     ? Math.max(0, snapshotDistanceKm)
     : 0;
 
+  if (snapshotDistance > 0) {
+    return snapshotDistance;
+  }
+
   if (liveDistanceKm !== null && liveDistanceKm !== undefined && Number.isFinite(liveDistanceKm)) {
     return Math.max(0, liveDistanceKm);
   }

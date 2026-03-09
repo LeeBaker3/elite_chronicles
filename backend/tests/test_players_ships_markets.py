@@ -413,6 +413,22 @@ def test_local_target_lock_and_transfer_for_planet(client, db_session):
     assert transfer_payload["flight_locked_destination_contact_type"] == "planet"
     assert transfer_payload["flight_locked_destination_contact_id"] == planet_id
 
+    ship = db_session.query(Ship).filter(Ship.id == state["ship_id"]).first()
+    assert ship is not None
+    planet_body = (
+        db_session.query(CelestialBody)
+        .filter(CelestialBody.id == planet_id)
+        .first()
+    )
+    assert planet_body is not None
+
+    center_distance_km = math.sqrt(
+        ((int(ship.position_x or 0) - int(planet_body.position_x or 0)) ** 2)
+        + ((int(ship.position_y or 0) - int(planet_body.position_y or 0)) ** 2)
+        + ((int(ship.position_z or 0) - int(planet_body.position_z or 0)) ** 2)
+    )
+    assert center_distance_km > float(planet_body.radius_km or 0)
+
 
 def test_ship_visual_key_uses_archetype_lookup_not_ship_name(client, db_session):
     headers = auth_headers_for(client, "visual-key@example.com", "visual-key")
@@ -827,8 +843,18 @@ def test_collision_check_applies_glancing_damage_and_logs_event(client, db_sessi
     assert post_grace_payload["severity"] in {"glancing", "critical"}
     assert post_grace_payload["object_type"] in {
         "station", "ship", "planet", "star"}
+    assert post_grace_payload["collision_context_type"] == post_grace_payload["object_type"]
+    assert isinstance(post_grace_payload["resolved_outcome"], str)
+    assert isinstance(post_grace_payload["destruction_triggered"], bool)
     assert post_grace_payload["shields_damage"] >= 0
     assert post_grace_payload["hull_damage"] >= 0
+    assert isinstance(post_grace_payload["sfx_event_keys"], list)
+    assert len(post_grace_payload["sfx_event_keys"]) >= 1
+    assert (
+        "collision.critical_hit"
+        if post_grace_payload["severity"] == "critical"
+        else "collision.glancing_hit"
+    ) in post_grace_payload["sfx_event_keys"]
     assert post_grace_payload["ship"]["shields_current"] <= 100
     assert post_grace_payload["ship"]["hull_current"] <= 100
 
@@ -899,6 +925,10 @@ def test_collision_check_critical_impact_triggers_checkpoint_recovery(
     assert payload["collision"] is True
     assert payload["severity"] == "critical"
     assert payload["recovered"] is True
+    assert payload["destruction_triggered"] is True
+    assert payload["resolved_outcome"] == "checkpoint_recovery"
+    assert "ops.crash_recovery_start" in payload["sfx_event_keys"]
+    assert "ops.crash_recovery_complete" in payload["sfx_event_keys"]
     assert payload["ship"]["crash_recovery_count"] == 1
     assert payload["ship"]["hull_current"] > 0
 
@@ -977,6 +1007,8 @@ def test_collision_check_suppresses_locked_station_impact_during_docking_approac
     assert payload["severity"] == "none"
     assert payload["object_type"] == "station"
     assert payload["object_id"] == f"station-{target_station.id}"
+    assert payload["resolved_outcome"] == "none"
+    assert payload["sfx_event_keys"] == []
     assert payload["message"].startswith(
         "Docking computer safety corridor active")
 
@@ -1368,6 +1400,9 @@ def test_ship_local_contacts_returns_ships_stations_planet_and_star(client, db_s
         assert station_contact["host_body_id"] is not None
         assert isinstance(station_contact["orbit_phase_deg"], int)
         assert station_contact["station_archetype_shape"] == "coriolis"
+        assert isinstance(station_contact["relative_x_km"], int)
+        assert isinstance(station_contact["relative_y_km"], int)
+        assert isinstance(station_contact["relative_z_km"], int)
         assert isinstance(station_contact["scene_x"], (float, int))
         assert isinstance(station_contact["scene_y"], (float, int))
         assert isinstance(station_contact["scene_z"], (float, int))

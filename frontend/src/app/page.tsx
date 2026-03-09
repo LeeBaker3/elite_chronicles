@@ -38,6 +38,7 @@ const LOCAL_CHART_SORT_STORAGE_KEY = "elite_local_chart_sort";
 const SCANNER_SELECTED_CONTACT_STORAGE_KEY = "elite_scanner_selected_contact";
 const SCANNER_RANGE_STORAGE_KEY = "elite_scanner_range_km";
 const FLIGHT_CONTACT_LABELS_STORAGE_KEY = "elite_flight_contact_labels";
+const FLIGHT_CAMERA_MODE_STORAGE_KEY = "elite_flight_camera_mode";
 const FLIGHT_SCANNER_DEBUG_STORAGE_KEY = "elite_flight_scanner_debug";
 const FLIGHT_AUDIO_ENABLED_STORAGE_KEY = "elite_flight_audio_enabled";
 const FLIGHT_REDUCED_AUDIO_STORAGE_KEY = "elite_flight_reduced_audio";
@@ -67,6 +68,7 @@ const FLIGHT_PHASE = {
 
 type FlightJumpPhase = (typeof FLIGHT_PHASE)[keyof typeof FLIGHT_PHASE];
 type FlightRenderProfile = "performance" | "balanced" | "cinematic";
+type FlightCameraMode = "boresight" | "cockpit";
 type LocalTargetStatus =
   | "none"
   | "in-system-locked"
@@ -694,6 +696,9 @@ type ScannerContact = {
   orbiting_planet_name?: string | null;
   station_archetype_shape?: string | null;
   ship_visual_key?: string | null;
+  relative_x_km?: number;
+  relative_y_km?: number;
+  relative_z_km?: number;
   scene_x: number;
   scene_y: number;
   scene_z: number;
@@ -729,6 +734,23 @@ type ScannerContactsResponse = {
   system_name: string;
   generation_version: number;
   contacts: ScannerContact[];
+};
+
+type FlightSceneCelestialAnchor = {
+  id: string;
+  contact_type: "planet" | "moon" | "star";
+  name: string;
+  distance_km: number;
+  orbiting_planet_name?: string | null;
+  body_kind: "star" | "planet" | "moon";
+  body_type?: string | null;
+  radius_km?: number | null;
+  relative_x_km?: number;
+  relative_y_km?: number;
+  relative_z_km?: number;
+  presentation_x: number;
+  presentation_y: number;
+  presentation_z: number;
 };
 
 type LocalChartBody = {
@@ -805,6 +827,9 @@ type ScannerLiveContact = {
   relative_x: number;
   relative_y: number;
   relative_z: number;
+  relative_x_km?: number;
+  relative_y_km?: number;
+  relative_z_km?: number;
   forward_distance: number;
   plane_x: number;
   plane_y: number;
@@ -822,7 +847,32 @@ type FlightDockingApproachProgress = {
   progress: number;
   distanceKm: number;
   targetName: string;
-  stage: "hold-entry" | "hold-align" | "final-approach";
+  stage: "hold-entry" | "hold-align" | "tunnel-entry" | "final-approach";
+};
+
+type FlightDockingDebugPayload = {
+  event: string;
+  contactId: string;
+  targetName?: string;
+  stage?: "hold-entry" | "hold-align" | "tunnel-entry" | "final-approach";
+  reason?: string;
+  distanceToPortKm?: number;
+  distanceToApproachPointKm?: number;
+  stageDistanceRemainingKm?: number;
+  reticleAlignmentCosine?: number;
+  corridorLateralOffsetKm?: number;
+  shouldMatchStationRotation?: boolean;
+  stationRotationRadians?: number;
+  shipSpeedKmPerSec?: number;
+  shipPosition?: { x: number; y: number; z: number };
+  portCorePosition?: { x: number; y: number; z: number };
+  portApproachPosition?: { x: number; y: number; z: number };
+  stationCenter?: { x: number; y: number; z: number };
+  portVisibleOnScreen?: boolean;
+  portCenteredOnScreen?: boolean;
+  portScreenOffsetX?: number;
+  portScreenOffsetY?: number;
+  portScreenDepthKm?: number;
 };
 
 type FlightSpawnDirective = {
@@ -878,9 +928,13 @@ type CollisionCheckResponse = {
   object_type: string | null;
   object_id: string | null;
   object_name: string | null;
+  collision_context_type?: string | null;
+  resolved_outcome?: string;
+  destruction_triggered?: boolean;
   distance_km: number | null;
   shields_damage: number;
   hull_damage: number;
+  sfx_event_keys?: string[];
   recovered: boolean;
   message: string;
 };
@@ -1269,7 +1323,7 @@ const FLIGHT_CELESTIAL_MIN_ORBIT_STEP_UNITS = 68;
 const buildFlightCelestialAnchors = (
   localChartData: LocalChartResponse,
   scannerContacts: ScannerContact[],
-): ScannerContact[] => {
+): FlightSceneCelestialAnchor[] => {
   const scannerContactById = new Map(scannerContacts.map((contact) => [contact.id, contact]));
   const star = localChartData.star;
 
@@ -1375,14 +1429,13 @@ const buildFlightCelestialAnchors = (
           ? "moon"
           : "planet",
       distance_km: scannerMatch?.distance_km ?? fallbackDistanceKm,
-      bearing_x: scannerMatch?.bearing_x ?? 0,
-      bearing_y: scannerMatch?.bearing_y ?? 0,
       orbiting_planet_name: scannerMatch?.orbiting_planet_name ?? null,
-      station_archetype_shape: null,
-      ship_visual_key: null,
-      scene_x: body.rel_x * directionScale,
-      scene_y: body.rel_y * directionScale,
-      scene_z: body.rel_z * directionScale,
+      relative_x_km: body.rel_x,
+      relative_y_km: body.rel_y,
+      relative_z_km: body.rel_z,
+      presentation_x: body.rel_x * directionScale,
+      presentation_y: body.rel_y * directionScale,
+      presentation_z: body.rel_z * directionScale,
       body_kind: body.body_kind,
       body_type: body.body_type,
       radius_km: body.radius_km,
@@ -1661,6 +1714,20 @@ export default function Home() {
   const [flightJumpCooldownSeconds, setFlightJumpCooldownSeconds] = useState(0);
   const [flightRenderProfile, setFlightRenderProfile] = useState<FlightRenderProfile>("balanced");
   const [showFlightSettings, setShowFlightSettings] = useState(false);
+  const [flightCameraMode, setFlightCameraMode] = useState<FlightCameraMode>(() => {
+    if (typeof window === "undefined") {
+      return "boresight";
+    }
+
+    try {
+      const stored = window.localStorage.getItem(FLIGHT_CAMERA_MODE_STORAGE_KEY);
+      return stored === "cockpit" || stored === "boresight"
+        ? stored
+        : "boresight";
+    } catch {
+      return "boresight";
+    }
+  });
   const [showFlightContactLabels, setShowFlightContactLabels] = useState(() => {
     if (typeof window === "undefined") {
       return false;
@@ -1800,8 +1867,8 @@ export default function Home() {
     y: number;
     z: number;
   } | null>(null);
+  const dockingDebugSequenceRef = useRef(0);
   const authExpiredHandledRef = useRef(false);
-  const activeProximityCollisionContactIdRef = useRef<string | null>(null);
   const systemChartOpenCountRef = useRef(0);
   const systemChartSyncSuccessCountRef = useRef(0);
   const systemChartSyncFailureCountRef = useRef(0);
@@ -3104,6 +3171,47 @@ export default function Home() {
     token,
   ]);
 
+  const emitDockingDebugLog = useCallback((
+    event: string,
+    payload?: Record<string, unknown>,
+  ): void => {
+    const dockingPhaseActive = (
+      flightDockingApproachTargetStationId !== null
+      || flightJumpPhase === FLIGHT_PHASE.DOCKING_APPROACH
+    );
+    if (!dockingPhaseActive && event !== "dock-command") {
+      return;
+    }
+
+    const sequence = dockingDebugSequenceRef.current + 1;
+    dockingDebugSequenceRef.current = sequence;
+    const shipPosition = shipTelemetry
+      ? {
+        x: shipTelemetry.position_x,
+        y: shipTelemetry.position_y,
+        z: shipTelemetry.position_z,
+      }
+      : null;
+
+    console.info("[DockingDebug]", {
+      sequence,
+      timestamp: new Date().toISOString(),
+      event,
+      jumpPhase: flightJumpPhase,
+      dockingApproachActive: flightDockingApproachTargetStationId !== null,
+      dockTargetContactId: flightDockingApproachTargetContactId,
+      dockingComputerRangeKm: shipTelemetry?.docking_computer_range_km ?? null,
+      shipStatus: shipTelemetry?.status ?? null,
+      shipPosition,
+      ...payload,
+    });
+  }, [
+    flightDockingApproachTargetContactId,
+    flightDockingApproachTargetStationId,
+    flightJumpPhase,
+    shipTelemetry,
+  ]);
+
   const fetchScannerContacts = useCallback(async (options?: { silent?: boolean }) => {
     if (!token) {
       setScannerContacts([]);
@@ -3158,11 +3266,12 @@ export default function Home() {
       const payload = data as ScannerContactsResponse;
       const contacts = Array.isArray(payload.contacts) ? payload.contacts : [];
       setScannerContacts(contacts);
-      dispatchFlightAudioEvent("scanner.ping", {
-        contacts_count: contacts.length,
-        system_id: payload.system_id,
-      });
-      setScannerLiveContacts([]);
+      if (!options?.silent) {
+        dispatchFlightAudioEvent("scanner.ping", {
+          contacts_count: contacts.length,
+          system_id: payload.system_id,
+        });
+      }
       setScannerSystemId(Number.isInteger(payload.system_id) ? payload.system_id : null);
       setScannerSystemName(payload.system_name || null);
       setScannerGenerationVersion(
@@ -3499,6 +3608,58 @@ export default function Home() {
     }
   }, [flightJumpPhase]);
 
+  const dispatchCollisionAudioEvents = useCallback((payload: CollisionCheckResponse) => {
+    const defaultEventKeys: FlightAudioEventName[] = [
+      payload.severity === "critical" ? "collision.critical_hit" : "collision.glancing_hit",
+      ...(payload.recovered
+        ? ["ops.crash_recovery_start", "ops.crash_recovery_complete"]
+        : []),
+    ];
+
+    const parsedEventKeys = Array.isArray(payload.sfx_event_keys)
+      ? payload.sfx_event_keys
+        .map((eventKey) => parseFlightAudioEventName(eventKey))
+        .filter((eventKey): eventKey is FlightAudioEventName => eventKey !== null)
+      : [];
+
+    const eventKeys = parsedEventKeys.length > 0 ? parsedEventKeys : defaultEventKeys;
+    eventKeys.forEach((eventKey) => {
+      dispatchFlightAudioEvent(eventKey, {
+        object_id: payload.object_id ?? null,
+        object_type: payload.object_type ?? payload.collision_context_type ?? null,
+        distance_km: payload.distance_km ?? null,
+        resolved_outcome: payload.resolved_outcome ?? null,
+        destruction_triggered: Boolean(payload.destruction_triggered),
+        recovered: Boolean(payload.recovered),
+      });
+    });
+  }, [dispatchFlightAudioEvent]);
+
+  const mergeCollisionTelemetryShip = useCallback((payload: CollisionCheckResponse): ShipTelemetry => {
+    const payloadShip = payload.ship;
+    const currentShip = shipTelemetry;
+    if (!currentShip) {
+      return payloadShip;
+    }
+
+    const payloadShipStatus = (payloadShip.status || "").trim().toLowerCase();
+    const preserveInSpacePosition = (
+      !payload.recovered
+      && payloadShipStatus === "in-space"
+      && currentShip.status === "in-space"
+    );
+    if (!preserveInSpacePosition) {
+      return payloadShip;
+    }
+
+    return {
+      ...payloadShip,
+      position_x: currentShip.position_x,
+      position_y: currentShip.position_y,
+      position_z: currentShip.position_z,
+    };
+  }, [shipTelemetry]);
+
   const fetchCollisionTelemetry = useCallback(async (options?: { silent?: boolean }) => {
     if (!token) {
       setFlightCollisionStatus("Collision monitor idle.");
@@ -3530,24 +3691,13 @@ export default function Home() {
       }
 
       const payload = data as CollisionCheckResponse;
-      setShipTelemetry(payload.ship);
+      setShipTelemetry(mergeCollisionTelemetryShip(payload));
       syncJumpCooldownFromShipTelemetry(payload.ship);
       syncFlightStateFromShipTelemetry(payload.ship);
       setFlightCollisionStatus(sanitizeCollisionStatusMessage(payload.message));
 
       if (payload.collision) {
-        dispatchFlightAudioEvent(
-          payload.severity === "critical" ? "collision.critical_hit" : "collision.glancing_hit",
-          {
-            object_id: payload.object_id ?? null,
-            object_type: payload.object_type ?? null,
-            distance_km: payload.distance_km ?? null,
-          },
-        );
-        dispatchFlightAudioEvent("ops.crash_recovery_start", {
-          recovered: Boolean(payload.recovered),
-          object_id: payload.object_id ?? null,
-        });
+        dispatchCollisionAudioEvents(payload);
         const signature = `${payload.severity}:${payload.object_id ?? "unknown"}:${payload.recovered ? "r" : "n"}`;
         const severityLabel = payload.severity.toUpperCase();
         const objectLabel = payload.object_name ?? payload.object_type ?? "unknown object";
@@ -3592,7 +3742,8 @@ export default function Home() {
       setFlightRecentImpacts([]);
     }
   }, [
-    dispatchFlightAudioEvent,
+    dispatchCollisionAudioEvents,
+    mergeCollisionTelemetryShip,
     shipId,
     showToast,
     syncFlightStateFromShipTelemetry,
@@ -4305,7 +4456,173 @@ export default function Home() {
 
   const localChartRows = useMemo<(LocalChartRow | null)[]>(() => {
     const minimumRows = 8;
+    const scannerLiveContactById = new Map(
+      scannerLiveContacts.map((liveContact) => [liveContact.id, liveContact]),
+    );
+    const scannerContactById = new Map(scannerContacts.map((contact) => [contact.id, contact]));
+    const anchoredShipWorldPosition = (() => {
+      if (!localChartData?.stations?.length) {
+        return null;
+      }
+
+      const stationById = new Map(
+        localChartData.stations.map((station) => [station.id, station]),
+      );
+      const preferredStationContactIds: string[] = [];
+      if (flightDockingApproachTargetContactId?.startsWith("station-")) {
+        preferredStationContactIds.push(flightDockingApproachTargetContactId);
+      }
+      if (scannerSelectedContactId?.startsWith("station-")) {
+        preferredStationContactIds.push(scannerSelectedContactId);
+      }
+      if (jumpTargetStationId && Number.isInteger(jumpTargetStationId) && jumpTargetStationId > 0) {
+        preferredStationContactIds.push(`station-${jumpTargetStationId}`);
+      }
+
+      const resolveAnchoredPosition = (liveContact: ScannerLiveContact | undefined): {
+        x: number;
+        y: number;
+        z: number;
+      } | null => {
+        if (!liveContact) {
+          return null;
+        }
+
+        const scannerContact = scannerContactById.get(liveContact.id);
+        if (!scannerContact || scannerContact.contact_type !== "station") {
+          return null;
+        }
+
+        const stationId = parseStationContactId(scannerContact.id);
+        if (!stationId) {
+          return null;
+        }
+
+        const station = stationById.get(stationId);
+        if (!station) {
+          return null;
+        }
+
+        return {
+          x: station.position_x - (
+            Number.isFinite(liveContact.relative_x_km)
+              ? Number(liveContact.relative_x_km)
+              : liveContact.relative_x * STATION_SCENE_TO_WORLD_SCALE_XZ
+          ),
+          y: station.position_y - (
+            Number.isFinite(liveContact.relative_y_km)
+              ? Number(liveContact.relative_y_km)
+              : liveContact.relative_y * STATION_SCENE_TO_WORLD_SCALE_Y
+          ),
+          z: station.position_z - (
+            Number.isFinite(liveContact.relative_z_km)
+              ? Number(liveContact.relative_z_km)
+              : liveContact.relative_z * STATION_SCENE_TO_WORLD_SCALE_XZ
+          ),
+        };
+      };
+
+      for (const preferredContactId of preferredStationContactIds) {
+        const anchoredPosition = resolveAnchoredPosition(
+          scannerLiveContactById.get(preferredContactId),
+        );
+        if (anchoredPosition) {
+          return anchoredPosition;
+        }
+      }
+
+      const nearestLiveStationContact = scannerLiveContacts
+        .filter((liveContact) => {
+          const scannerContact = scannerContactById.get(liveContact.id);
+          return scannerContact?.contact_type === "station";
+        })
+        .sort((left, right) => left.distance - right.distance)[0];
+
+      return resolveAnchoredPosition(nearestLiveStationContact);
+    })();
+    const scannerContactWorldPositionById = (() => {
+      const map = new Map<string, { x: number; y: number; z: number }>();
+      if (!anchoredShipWorldPosition) {
+        return map;
+      }
+
+      scannerContacts.forEach((contact) => {
+        const liveContact = scannerLiveContactById.get(contact.id);
+        const relativeXKm = Number.isFinite(liveContact?.relative_x_km)
+          ? Number(liveContact?.relative_x_km)
+          : Number.isFinite(contact.relative_x_km)
+            ? Number(contact.relative_x_km)
+            : null;
+        const relativeYKm = Number.isFinite(liveContact?.relative_y_km)
+          ? Number(liveContact?.relative_y_km)
+          : Number.isFinite(contact.relative_y_km)
+            ? Number(contact.relative_y_km)
+            : null;
+        const relativeZKm = Number.isFinite(liveContact?.relative_z_km)
+          ? Number(liveContact?.relative_z_km)
+          : Number.isFinite(contact.relative_z_km)
+            ? Number(contact.relative_z_km)
+            : null;
+
+        if (
+          relativeXKm === null
+          || relativeYKm === null
+          || relativeZKm === null
+        ) {
+          return;
+        }
+
+        map.set(contact.id, {
+          x: anchoredShipWorldPosition.x + relativeXKm,
+          y: anchoredShipWorldPosition.y + relativeYKm,
+          z: anchoredShipWorldPosition.z + relativeZKm,
+        });
+      });
+
+      return map;
+    })();
     const isLayerVisible = (contactType: ScannerContactType): boolean => localChartLayers[contactType];
+    const resolveFallbackChartPosition = (contact: ScannerContact): {
+      x: number;
+      y: number;
+      z: number;
+    } => {
+      const liveContact = scannerLiveContactById.get(contact.id);
+      const relativeXKm = Number.isFinite(liveContact?.relative_x_km)
+        ? Number(liveContact?.relative_x_km)
+        : Number.isFinite(contact.relative_x_km)
+          ? Number(contact.relative_x_km)
+          : null;
+      const relativeYKm = Number.isFinite(liveContact?.relative_y_km)
+        ? Number(liveContact?.relative_y_km)
+        : Number.isFinite(contact.relative_y_km)
+          ? Number(contact.relative_y_km)
+          : null;
+      const relativeZKm = Number.isFinite(liveContact?.relative_z_km)
+        ? Number(liveContact?.relative_z_km)
+        : Number.isFinite(contact.relative_z_km)
+          ? Number(contact.relative_z_km)
+          : null;
+
+      if (
+        relativeXKm !== null
+        && relativeYKm !== null
+        && relativeZKm !== null
+      ) {
+        return {
+          x: relativeXKm,
+          y: relativeYKm,
+          z: relativeZKm,
+        };
+      }
+
+      return {
+        x: contact.scene_x,
+        y: contact.scene_y,
+        z: contact.scene_z,
+      };
+    };
+
     const isRowVisible = (row: LocalChartRow): boolean => {
       if (row.body_kind === "star") {
         return localChartLayers.star;
@@ -4327,22 +4644,25 @@ export default function Home() {
         .filter((contact) => isLayerVisible(contact.contact_type))
         .sort((left, right) => left.distance_km - right.distance_km)
         .slice(0, minimumRows)
-        .map((contact) => ({
-          id: contact.id,
-          contact_type: contact.contact_type,
-          body_kind: contact.contact_type,
-          body_type: null,
-          name: contact.name,
-          visual_label: contact.contact_type === "ship"
-            ? (contact.ship_visual_key ?? "cobra-mk1")
-            : "—",
-          radius_km: null,
-          distance_km: contact.distance_km,
-          orbit_label: contact.orbiting_planet_name ?? "—",
-          chart_x: contact.scene_x,
-          chart_y: contact.scene_y,
-          chart_z: contact.scene_z,
-        }));
+        .map((contact) => {
+          const position = resolveFallbackChartPosition(contact);
+          return {
+            id: contact.id,
+            contact_type: contact.contact_type,
+            body_kind: contact.contact_type,
+            body_type: null,
+            name: contact.name,
+            visual_label: contact.contact_type === "ship"
+              ? (contact.ship_visual_key ?? "cobra-mk1")
+              : "—",
+            radius_km: null,
+            distance_km: contact.distance_km,
+            orbit_label: contact.orbiting_planet_name ?? "—",
+            chart_x: position.x,
+            chart_y: position.y,
+            chart_z: position.z,
+          };
+        });
 
       if (fallback.length >= minimumRows) {
         return fallback;
@@ -4354,7 +4674,6 @@ export default function Home() {
       ];
     }
 
-    const scannerContactById = new Map(scannerContacts.map((contact) => [contact.id, contact]));
     const planetNameById = new Map<number, string>();
     localChartData.planets.forEach((planet) => {
       planetNameById.set(planet.id, planet.name);
@@ -4362,6 +4681,7 @@ export default function Home() {
 
     const rows: LocalChartRow[] = [];
     const starId = `star-${localChartData.star.id}`;
+    const starWorldPosition = scannerContactWorldPositionById.get(starId);
     rows.push({
       id: starId,
       contact_type: "star",
@@ -4375,13 +4695,14 @@ export default function Home() {
       radius_km: localChartData.star.radius_km,
       distance_km: scannerContactById.get(starId)?.distance_km ?? null,
       orbit_label: "System primary",
-      chart_x: localChartData.star.position_x,
-      chart_y: localChartData.star.position_y,
-      chart_z: localChartData.star.position_z,
+      chart_x: starWorldPosition?.x ?? localChartData.star.position_x,
+      chart_y: starWorldPosition?.y ?? localChartData.star.position_y,
+      chart_z: starWorldPosition?.z ?? localChartData.star.position_z,
     });
 
     localChartData.planets.forEach((planet) => {
       const planetId = `planet-${planet.id}`;
+      const planetWorldPosition = scannerContactWorldPositionById.get(planetId);
       rows.push({
         id: planetId,
         contact_type: "planet",
@@ -4392,15 +4713,16 @@ export default function Home() {
         radius_km: planet.radius_km,
         distance_km: scannerContactById.get(planetId)?.distance_km ?? null,
         orbit_label: `${planet.orbit_radius_km.toLocaleString()} km`,
-        chart_x: planet.position_x,
-        chart_y: planet.position_y,
-        chart_z: planet.position_z,
+        chart_x: planetWorldPosition?.x ?? planet.position_x,
+        chart_y: planetWorldPosition?.y ?? planet.position_y,
+        chart_z: planetWorldPosition?.z ?? planet.position_z,
       });
     });
 
     Object.values(localChartData.moons_by_parent_body_id).forEach((moons) => {
       moons.forEach((moon) => {
         const moonId = `moon-${moon.id}`;
+        const moonWorldPosition = scannerContactWorldPositionById.get(moonId);
         const parentLabel = moon.parent_body_id
           ? (planetNameById.get(moon.parent_body_id) ?? `Body #${moon.parent_body_id}`)
           : "Parent unknown";
@@ -4414,9 +4736,9 @@ export default function Home() {
           radius_km: moon.radius_km,
           distance_km: scannerContactById.get(moonId)?.distance_km ?? null,
           orbit_label: `${moon.orbit_radius_km.toLocaleString()} km · ${parentLabel}`,
-          chart_x: moon.position_x,
-          chart_y: moon.position_y,
-          chart_z: moon.position_z,
+          chart_x: moonWorldPosition?.x ?? moon.position_x,
+          chart_y: moonWorldPosition?.y ?? moon.position_y,
+          chart_z: moonWorldPosition?.z ?? moon.position_z,
         });
       });
     });
@@ -4424,6 +4746,7 @@ export default function Home() {
     localChartData.stations.forEach((station) => {
       const stationId = `station-${station.id}`;
       const stationContact = scannerContactById.get(stationId);
+      const stationWorldPosition = scannerContactWorldPositionById.get(stationId);
       rows.push({
         id: stationId,
         contact_type: "station",
@@ -4436,28 +4759,32 @@ export default function Home() {
         orbit_label: station.host_body_id
           ? (planetNameById.get(station.host_body_id) ?? `Body #${station.host_body_id}`)
           : "—",
-        chart_x: station.position_x,
-        chart_y: station.position_y,
-        chart_z: station.position_z,
+        chart_x: stationWorldPosition?.x ?? station.position_x,
+        chart_y: stationWorldPosition?.y ?? station.position_y,
+        chart_z: stationWorldPosition?.z ?? station.position_z,
       });
     });
 
     const shipRows = scannerContacts
       .filter((contact) => contact.contact_type === "ship")
-      .map((contact) => ({
-        id: contact.id,
-        contact_type: "ship" as const,
-        body_kind: "ship" as const,
-        body_type: null,
-        name: contact.name,
-        visual_label: contact.ship_visual_key ?? "cobra-mk1",
-        radius_km: null,
-        distance_km: contact.distance_km,
-        orbit_label: contact.orbiting_planet_name ?? "—",
-        chart_x: contact.scene_x,
-        chart_y: contact.scene_y,
-        chart_z: contact.scene_z,
-      }))
+      .map((contact) => {
+        const worldPosition = scannerContactWorldPositionById.get(contact.id)
+          ?? resolveFallbackChartPosition(contact);
+        return {
+          id: contact.id,
+          contact_type: "ship" as const,
+          body_kind: "ship" as const,
+          body_type: null,
+          name: contact.name,
+          visual_label: contact.ship_visual_key ?? "cobra-mk1",
+          radius_km: null,
+          distance_km: contact.distance_km,
+          orbit_label: contact.orbiting_planet_name ?? "—",
+          chart_x: worldPosition.x,
+          chart_y: worldPosition.y,
+          chart_z: worldPosition.z,
+        };
+      })
       .sort((left, right) => {
         const distanceDelta = (left.distance_km ?? Number.POSITIVE_INFINITY)
           - (right.distance_km ?? Number.POSITIVE_INFINITY);
@@ -4487,7 +4814,15 @@ export default function Home() {
       ...ordered,
       ...Array.from({ length: minimumRows - ordered.length }, () => null),
     ];
-  }, [localChartData, localChartLayers, scannerContacts]);
+  }, [
+    flightDockingApproachTargetContactId,
+    jumpTargetStationId,
+    localChartData,
+    localChartLayers,
+    scannerContacts,
+    scannerLiveContacts,
+    scannerSelectedContactId,
+  ]);
 
   const localChartDisplayResult = useMemo<{
     rows: (LocalChartRow | null)[];
@@ -5021,14 +5356,14 @@ export default function Home() {
     if (flightDockingApproachTargetContactId) {
       return flightDockingApproachTargetContactId;
     }
+    if (flightLocalWaypointContactId) {
+      return flightLocalWaypointContactId;
+    }
     if (flightDestinationLockedContactId) {
       return flightDestinationLockedContactId;
     }
     if (flightDestinationLockedId) {
       return `station-${flightDestinationLockedId}`;
-    }
-    if (flightLocalWaypointContactId) {
-      return flightLocalWaypointContactId;
     }
     if (scannerSelectedContactId) {
       return scannerSelectedContactId;
@@ -6404,6 +6739,9 @@ export default function Home() {
     if (flightDockingApproachTargetContactId) {
       return flightDockingApproachTargetContactId;
     }
+    if (flightLocalWaypointContactId) {
+      return flightLocalWaypointContactId;
+    }
     if (flightDestinationLockedContactId) {
       return flightDestinationLockedContactId;
     }
@@ -6411,7 +6749,12 @@ export default function Home() {
       return null;
     }
     return `station-${flightDestinationLockedId}`;
-  }, [flightDestinationLockedContactId, flightDockingApproachTargetContactId, flightDestinationLockedId]);
+  }, [
+    flightDestinationLockedContactId,
+    flightDestinationLockedId,
+    flightDockingApproachTargetContactId,
+    flightLocalWaypointContactId,
+  ]);
 
   const scannerLiveContactMap = useMemo(() => {
     const map = new Map<string, ScannerLiveContact>();
@@ -6433,31 +6776,89 @@ export default function Home() {
       localChartData.stations.map((station) => [station.id, station]),
     );
 
-    for (const liveContact of scannerLiveContacts) {
+    const preferredStationContactIds: string[] = [];
+    if (flightDockingApproachTargetContactId?.startsWith("station-")) {
+      preferredStationContactIds.push(flightDockingApproachTargetContactId);
+    }
+    if (scannerSelectedContactId?.startsWith("station-")) {
+      preferredStationContactIds.push(scannerSelectedContactId);
+    }
+    if (jumpTargetStationId && Number.isInteger(jumpTargetStationId) && jumpTargetStationId > 0) {
+      preferredStationContactIds.push(`station-${jumpTargetStationId}`);
+    }
+
+    const liveStationContactById = new Map(
+      scannerLiveContacts.map((liveContact) => [liveContact.id, liveContact]),
+    );
+
+    const resolveAnchoredPosition = (liveContact: ScannerLiveContact | undefined): {
+      x: number;
+      y: number;
+      z: number;
+    } | null => {
+      if (!liveContact) {
+        return null;
+      }
+
       const scannerContact = scannerContactById.get(liveContact.id);
       if (!scannerContact || scannerContact.contact_type !== "station") {
-        continue;
+        return null;
       }
 
       const stationId = parseStationContactId(scannerContact.id);
       if (!stationId) {
-        continue;
+        return null;
       }
 
       const station = stationById.get(stationId);
       if (!station) {
-        continue;
+        return null;
       }
 
       return {
-        x: station.position_x - (liveContact.relative_x * STATION_SCENE_TO_WORLD_SCALE_XZ),
-        y: station.position_y - (liveContact.relative_y * STATION_SCENE_TO_WORLD_SCALE_Y),
-        z: station.position_z - (liveContact.relative_z * STATION_SCENE_TO_WORLD_SCALE_XZ),
+        x: station.position_x - (
+          Number.isFinite(liveContact.relative_x_km)
+            ? Number(liveContact.relative_x_km)
+            : liveContact.relative_x * STATION_SCENE_TO_WORLD_SCALE_XZ
+        ),
+        y: station.position_y - (
+          Number.isFinite(liveContact.relative_y_km)
+            ? Number(liveContact.relative_y_km)
+            : liveContact.relative_y * STATION_SCENE_TO_WORLD_SCALE_Y
+        ),
+        z: station.position_z - (
+          Number.isFinite(liveContact.relative_z_km)
+            ? Number(liveContact.relative_z_km)
+            : liveContact.relative_z * STATION_SCENE_TO_WORLD_SCALE_XZ
+        ),
       };
+    };
+
+    for (const preferredContactId of preferredStationContactIds) {
+      const anchoredPosition = resolveAnchoredPosition(
+        liveStationContactById.get(preferredContactId),
+      );
+      if (anchoredPosition) {
+        return anchoredPosition;
+      }
     }
 
-    return null;
-  }, [localChartData?.stations, scannerContacts, scannerLiveContacts]);
+    const nearestLiveStationContact = scannerLiveContacts
+      .filter((liveContact) => {
+        const scannerContact = scannerContactById.get(liveContact.id);
+        return scannerContact?.contact_type === "station";
+      })
+      .sort((left, right) => left.distance - right.distance)[0];
+
+    return resolveAnchoredPosition(nearestLiveStationContact);
+  }, [
+    flightDockingApproachTargetContactId,
+    jumpTargetStationId,
+    localChartData?.stations,
+    scannerContacts,
+    scannerLiveContacts,
+    scannerSelectedContactId,
+  ]);
 
   const activeDockTargetLiveContact = useMemo(() => {
     if (!activeDockTargetContact) {
@@ -6506,6 +6907,19 @@ export default function Home() {
     }
     return activeDockTargetDistanceKm <= dockingComputerRangeKm;
   }, [activeDockTargetDistanceKm, dockingComputerRangeKm]);
+
+  const isDockingRotationMatchEnabled = useMemo(() => {
+    return (
+      isDockingApproachActive
+      && activeDockTargetDistanceMode === "port"
+      && activeDockTargetDistanceKm !== null
+      && activeDockTargetDistanceKm <= 2
+    );
+  }, [
+    activeDockTargetDistanceKm,
+    activeDockTargetDistanceMode,
+    isDockingApproachActive,
+  ]);
 
   const dockTargetRangeLabel = useMemo(() => {
     if (!activeDockTargetContact) {
@@ -6603,6 +7017,15 @@ export default function Home() {
       const scannerAltitudeRangeKm = Math.max(10, scannerPlaneRangeKm * 0.44);
       const live = scannerLiveContactMap.get(contact.id);
       const isInView = live?.in_view ?? true;
+      const fallbackRelativeX = Number.isFinite(contact.relative_x_km)
+        ? Number(contact.relative_x_km)
+        : contact.scene_x;
+      const fallbackRelativeY = Number.isFinite(contact.relative_y_km)
+        ? Number(contact.relative_y_km)
+        : contact.scene_y;
+      const fallbackRelativeZ = Number.isFinite(contact.relative_z_km)
+        ? Number(contact.relative_z_km)
+        : contact.scene_z;
 
       const effectiveDistanceKm = resolveScannerDisplayDistanceKm(
         contact.distance_km,
@@ -6610,19 +7033,13 @@ export default function Home() {
       );
       const isBeyondScannerRange = effectiveDistanceKm > scannerRangeKm;
 
-      const fallbackPlaneX = Math.max(-1, Math.min(1, contact.scene_x / scannerPlaneRangeKm));
-      const fallbackPlaneY = Math.max(-1, Math.min(1, (-contact.scene_z) / scannerPlaneRangeKm));
-      const fallbackAltitude = Math.max(-1, Math.min(1, contact.scene_y / scannerAltitudeRangeKm));
+      const fallbackPlaneX = Math.max(-1, Math.min(1, fallbackRelativeX / scannerPlaneRangeKm));
+      const fallbackPlaneY = Math.max(-1, Math.min(1, (-fallbackRelativeZ) / scannerPlaneRangeKm));
+      const fallbackAltitude = Math.max(-1, Math.min(1, fallbackRelativeY / scannerAltitudeRangeKm));
 
-      const rawPlaneX = live
-        ? (isInView ? Math.max(-1, Math.min(1, live.fov_x)) : live.plane_x)
-        : fallbackPlaneX;
-      const rawPlaneY = live
-        ? (isInView ? Math.max(-1, Math.min(1, live.fov_y)) : live.plane_y)
-        : fallbackPlaneY;
-      const rawAltitude = live
-        ? (isInView ? 0 : live.altitude)
-        : fallbackAltitude;
+      const rawPlaneX = live ? live.plane_x : fallbackPlaneX;
+      const rawPlaneY = live ? live.plane_y : fallbackPlaneY;
+      const rawAltitude = live ? live.altitude : fallbackAltitude;
 
       const visibleOnScannerGrid = (
         !isBeyondScannerRange
@@ -6630,7 +7047,6 @@ export default function Home() {
           ? (
             Math.abs(rawPlaneX) <= 1
             && Math.abs(rawPlaneY) <= 1
-            && Math.abs(rawAltitude) <= 1
           )
           : true)
       );
@@ -6644,8 +7060,6 @@ export default function Home() {
       const SCANNER_X_RANGE_PERCENT = 42;
       const SCANNER_Y_RANGE_PERCENT = 39;
       const SCANNER_ALTITUDE_RANGE_PERCENT = 18;
-      const SCANNER_DISTANCE_NEAR_KM = 4;
-      const SCANNER_DISTANCE_FAR_KM = Math.max(SCANNER_DISTANCE_NEAR_KM + 1, scannerRangeKm);
       const SCANNER_PLANE_TOP_PERCENT = 44;
       const SCANNER_PLANE_BOTTOM_PERCENT = 88;
       const SCANNER_PLANE_CENTER_Y_PERCENT =
@@ -6655,16 +7069,6 @@ export default function Home() {
       const SCANNER_PLANE_VISUAL_PADDING_PERCENT = 2.2;
 
       const planeTop = (() => {
-        if (live && isInView) {
-          const normalizedDistance = Math.max(0, Math.min(
-            1,
-            (effectiveDistanceKm - SCANNER_DISTANCE_NEAR_KM)
-            / (SCANNER_DISTANCE_FAR_KM - SCANNER_DISTANCE_NEAR_KM),
-          ));
-          const distanceDepthFactor = Math.sqrt(normalizedDistance);
-          return clampPercent(SCANNER_CENTER_PERCENT - (distanceDepthFactor * 30));
-        }
-
         const rawPlaneTop = clampPercent(SCANNER_CENTER_PERCENT - (planeY * SCANNER_Y_RANGE_PERCENT));
         const planeEllipseVerticalFactor = Math.sqrt(
           Math.max(0, 1 - (planeX * planeX)),
@@ -6687,18 +7091,7 @@ export default function Home() {
         );
       })();
 
-      const left = (() => {
-        if (live && isInView) {
-          const dyFromOrigin = Math.max(0, SCANNER_CENTER_PERCENT - planeTop);
-          const halfAngleRadians = (scannerFovHalfAngleDegrees * Math.PI) / 180;
-          const wedgeHalfWidth = Math.max(
-            2,
-            dyFromOrigin * Math.tan(halfAngleRadians),
-          );
-          return clampPercent(50 + (planeX * wedgeHalfWidth));
-        }
-        return clampPercent(SCANNER_CENTER_PERCENT + planeX * SCANNER_X_RANGE_PERCENT);
-      })();
+      const left = clampPercent(SCANNER_CENTER_PERCENT + planeX * SCANNER_X_RANGE_PERCENT);
 
       const dotTop = live && isInView
         ? planeTop
@@ -6712,9 +7105,9 @@ export default function Home() {
         altitude,
         inView: isInView,
         isBeyondScannerRange,
-        relativeX: live?.relative_x ?? contact.scene_x,
-        relativeY: live?.relative_y ?? contact.scene_y,
-        relativeZ: live?.relative_z ?? contact.scene_z,
+        relativeX: live?.relative_x ?? fallbackRelativeX,
+        relativeY: live?.relative_y ?? fallbackRelativeY,
+        relativeZ: live?.relative_z ?? fallbackRelativeZ,
         displayDistance: effectiveDistanceKm,
         visibleOnScannerGrid,
         planeX,
@@ -6726,7 +7119,7 @@ export default function Home() {
         scannerTop: planeTop,
       };
     })
-  ), [scannerContacts, scannerFovHalfAngleDegrees, scannerLiveContactMap, scannerRangeKm]);
+  ), [scannerContacts, scannerLiveContactMap, scannerRangeKm]);
 
   const scannerOutOfRangeContactCount = useMemo(
     () => scannerHudContacts.filter((contact) => contact.isBeyondScannerRange).length,
@@ -6754,7 +7147,7 @@ export default function Home() {
     ];
   }, [scannerHudContacts, scannerSelectedContactId]);
 
-  const scannerCelestialAnchors = useMemo(
+  const scannerCelestialAnchors = useMemo<FlightSceneCelestialAnchor[]>(
     () => {
       if (localChartData) {
         return buildFlightCelestialAnchors(localChartData, scannerContacts).slice(0, 24);
@@ -6766,7 +7159,28 @@ export default function Home() {
           || contact.contact_type === "planet"
           || contact.contact_type === "moon"
         ))
-        .slice(0, 10);
+        .slice(0, 10)
+        .map((contact) => ({
+          id: contact.id,
+          contact_type: contact.contact_type,
+          name: contact.name,
+          distance_km: contact.distance_km,
+          orbiting_planet_name: contact.orbiting_planet_name ?? null,
+          body_kind: contact.body_kind
+            ?? (contact.contact_type === "star"
+              ? "star"
+              : contact.contact_type === "moon"
+                ? "moon"
+                : "planet"),
+          body_type: contact.body_type ?? null,
+          radius_km: contact.radius_km ?? null,
+          relative_x_km: contact.relative_x_km,
+          relative_y_km: contact.relative_y_km,
+          relative_z_km: contact.relative_z_km,
+          presentation_x: contact.scene_x,
+          presentation_y: contact.scene_y,
+          presentation_z: contact.scene_z,
+        }));
     },
     [localChartData, scannerContacts],
   );
@@ -7090,17 +7504,23 @@ export default function Home() {
 
   const syncShipPositionDuringFlight = useCallback(async (
     nextPosition: { x: number; y: number; z: number },
-  ): Promise<void> => {
+    options?: { dockingApproachActive?: boolean },
+  ): Promise<ShipTelemetry | null> => {
     if (!token) {
-      return;
+      return null;
     }
 
     const parsedShipId = Number(shipId);
     if (!Number.isInteger(parsedShipId) || parsedShipId <= 0) {
-      return;
+      return null;
     }
 
     try {
+      if (options?.dockingApproachActive) {
+        emitDockingDebugLog("position-sync.request", {
+          nextPosition,
+        });
+      }
       const response = await fetch(`${API_BASE}/api/ships/${parsedShipId}/position-sync`, {
         method: "POST",
         headers: {
@@ -7114,22 +7534,45 @@ export default function Home() {
         }),
       });
       if (!response.ok) {
-        return;
+        if (options?.dockingApproachActive) {
+          emitDockingDebugLog("position-sync.non-200", {
+            status: response.status,
+          });
+        }
+        return null;
       }
 
       const data = await response.json();
-      setShipTelemetry(data);
+      const typedTelemetry = data as ShipTelemetry;
+      if (options?.dockingApproachActive) {
+        emitDockingDebugLog("position-sync.ok", {
+          syncedPosition: {
+            x: typedTelemetry.position_x ?? null,
+            y: typedTelemetry.position_y ?? null,
+            z: typedTelemetry.position_z ?? null,
+          },
+        });
+      }
+      setShipTelemetry(typedTelemetry);
       flightPositionSyncLastCoordsRef.current = nextPosition;
 
       const now = Date.now();
-      if (now - flightPositionSyncLastScannerRefreshAtRef.current >= 1500) {
+      if (
+        !options?.dockingApproachActive
+        && now - flightPositionSyncLastScannerRefreshAtRef.current >= 1500
+      ) {
         flightPositionSyncLastScannerRefreshAtRef.current = now;
         void fetchScannerContacts({ silent: true });
       }
+      return typedTelemetry;
     } catch {
-      return;
+      if (options?.dockingApproachActive) {
+        emitDockingDebugLog("position-sync.error");
+      }
+      return null;
     }
   }, [
+    emitDockingDebugLog,
     fetchScannerContacts,
     shipId,
     token,
@@ -7260,6 +7703,8 @@ export default function Home() {
         ? "safe hold-point maneuver"
         : stage === "hold-align"
           ? "hold-point alignment"
+          : stage === "tunnel-entry"
+            ? "tunnel entry"
           : "final docking approach";
       setShipOpsStatus(
         `Docking approach to ${targetName}: ${stageLabel} · ${distanceKm.toFixed(1)} km (${normalizedProgress.toFixed(0)}%).`,
@@ -7267,6 +7712,12 @@ export default function Home() {
     },
     [flightJumpProgress, isDockingApproachActive],
   );
+
+  const handleFlightSceneDockingDebug = useCallback((
+    payload: FlightDockingDebugPayload,
+  ): void => {
+    emitDockingDebugLog(`scene.${payload.event}`, payload);
+  }, [emitDockingDebugLog]);
 
   const handleFlightDockingApproachComplete = useCallback(async (): Promise<void> => {
     const stationId = flightDockingApproachTargetStationId;
@@ -7279,9 +7730,36 @@ export default function Home() {
     dockingApproachCompletionInFlightRef.current = true;
     setFlightJumpProgress(100);
     setShipOpsStatus("Final approach complete. Requesting docking clamps...");
+    const finalDockingPosition = liveStationAnchoredShipPosition
+      ? {
+        x: Math.round(liveStationAnchoredShipPosition.x),
+        y: Math.round(liveStationAnchoredShipPosition.y),
+        z: Math.round(liveStationAnchoredShipPosition.z),
+      }
+      : null;
+    if (finalDockingPosition) {
+      emitDockingDebugLog("dock-request.pre-sync", {
+        stationId,
+        stationLabel,
+        finalDockingPosition,
+      });
+      await syncShipPositionDuringFlight(finalDockingPosition, {
+        dockingApproachActive: true,
+      });
+    }
+    emitDockingDebugLog("dock-request.dispatch", {
+      stationId,
+      stationLabel,
+    });
 
     const success = await handleShipOperation("dock", {
       stationIdOverride: stationId,
+    });
+
+    emitDockingDebugLog("dock-request.result", {
+      stationId,
+      stationLabel,
+      success,
     });
 
     resetDockingApproachState();
@@ -7300,12 +7778,15 @@ export default function Home() {
     void persistFlightState(FLIGHT_PHASE.ERROR, null);
   }, [
     activeDockTargetContact?.name,
+    emitDockingDebugLog,
     dispatchFlightAudioEvent,
     flightDockingApproachTargetStationId,
     handleShipOperation,
+    liveStationAnchoredShipPosition,
     persistFlightState,
     resetDockingApproachState,
     runDockInboundTransitCinematic,
+    syncShipPositionDuringFlight,
   ]);
 
   const handleCancelDockingApproach = useCallback((): void => {
@@ -7331,6 +7812,9 @@ export default function Home() {
 
   const handleDockCommand = useCallback(
     async (stationIdOverride?: number): Promise<void> => {
+      emitDockingDebugLog("dock-command", {
+        stationIdOverride: stationIdOverride ?? null,
+      });
       if (isDockingApproachActive) {
         setShipOpsStatus("Docking approach already in progress.");
         return;
@@ -7346,6 +7830,10 @@ export default function Home() {
       const targetContact = scannerContacts.find((contact) => contact.id === targetContactId);
 
       if (!targetContact) {
+        emitDockingDebugLog("dock-command.target-sync", {
+          stationId: parsedDockStationId,
+          targetContactId,
+        });
         setActiveMode("flight");
         setFlightJumpPhase(FLIGHT_PHASE.DOCKING_APPROACH);
         setFlightJumpProgress(0);
@@ -7360,6 +7848,13 @@ export default function Home() {
         return;
       }
 
+      emitDockingDebugLog("dock-command.approach-start", {
+        stationId: parsedDockStationId,
+        targetContactId,
+        targetName: targetContact.name,
+        targetDistanceKm: targetContact.distance_km,
+      });
+
       setActiveMode("flight");
       setFlightJumpPhase(FLIGHT_PHASE.DOCKING_APPROACH);
       setFlightJumpProgress(0);
@@ -7373,6 +7868,7 @@ export default function Home() {
       void persistFlightState(FLIGHT_PHASE.DOCKING_APPROACH, parsedDockStationId);
     },
     [
+      emitDockingDebugLog,
       dispatchFlightAudioEvent,
       dockStationId,
       isDockingApproachActive,
@@ -8166,12 +8662,13 @@ export default function Home() {
       }
 
       const payload = data as CollisionCheckResponse;
-      setShipTelemetry(payload.ship);
+      setShipTelemetry(mergeCollisionTelemetryShip(payload));
       syncJumpCooldownFromShipTelemetry(payload.ship);
       syncFlightStateFromShipTelemetry(payload.ship);
       setFlightCollisionStatus(sanitizeCollisionStatusMessage(payload.message));
 
       if (payload.collision) {
+        dispatchCollisionAudioEvents(payload);
         const signature = `${payload.severity}:${payload.object_id ?? "unknown"}:${payload.recovered ? "r" : "n"}`;
         const severityLabel = payload.severity.toUpperCase();
         const objectLabel = payload.object_name ?? payload.object_type ?? "unknown object";
@@ -8208,9 +8705,6 @@ export default function Home() {
       }
 
       if (payload.recovered) {
-        dispatchFlightAudioEvent("ops.crash_recovery_complete", {
-          object_id: payload.object_id ?? null,
-        });
         setFlightSceneResetKey((current) => current + 1);
         await fetchScannerContacts({ silent: true });
       }
@@ -8224,7 +8718,8 @@ export default function Home() {
     flightCollisionStatus,
     isFlightTransitActive,
     isDockingApproachActive,
-    dispatchFlightAudioEvent,
+    dispatchCollisionAudioEvents,
+    mergeCollisionTelemetryShip,
     shipId,
     showToast,
     syncFlightStateFromShipTelemetry,
@@ -8359,6 +8854,13 @@ export default function Home() {
       JSON.stringify(localChartSortState),
     );
   }, [localChartSortState]);
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      FLIGHT_CAMERA_MODE_STORAGE_KEY,
+      flightCameraMode,
+    );
+  }, [flightCameraMode]);
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -8959,7 +9461,7 @@ export default function Home() {
     if (!jumpPhaseIsStable) {
       return;
     }
-    if (isFlightTransitActive || isDockingApproachActive || !liveStationAnchoredShipPosition) {
+    if (isFlightTransitActive || !liveStationAnchoredShipPosition) {
       return;
     }
 
@@ -8969,18 +9471,20 @@ export default function Home() {
       z: Math.round(liveStationAnchoredShipPosition.z),
     };
     const lastPosition = flightPositionSyncLastCoordsRef.current;
+    const minimumAxisDelta = 2;
     const movedEnough = (
       lastPosition === null
-      || Math.abs(roundedPosition.x - lastPosition.x) >= 2
-      || Math.abs(roundedPosition.y - lastPosition.y) >= 2
-      || Math.abs(roundedPosition.z - lastPosition.z) >= 2
+      || Math.abs(roundedPosition.x - lastPosition.x) >= minimumAxisDelta
+      || Math.abs(roundedPosition.y - lastPosition.y) >= minimumAxisDelta
+      || Math.abs(roundedPosition.z - lastPosition.z) >= minimumAxisDelta
     );
     if (!movedEnough) {
       return;
     }
 
     const now = Date.now();
-    if (now - flightPositionSyncLastSentAtRef.current < 900) {
+    const syncIntervalMs = isDockingApproachActive ? 1200 : 900;
+    if (now - flightPositionSyncLastSentAtRef.current < syncIntervalMs) {
       return;
     }
     if (flightPositionSyncInFlightRef.current) {
@@ -8989,7 +9493,9 @@ export default function Home() {
 
     flightPositionSyncInFlightRef.current = true;
     flightPositionSyncLastSentAtRef.current = now;
-    void syncShipPositionDuringFlight(roundedPosition).finally(() => {
+    void syncShipPositionDuringFlight(roundedPosition, {
+      dockingApproachActive: isDockingApproachActive,
+    }).finally(() => {
       flightPositionSyncInFlightRef.current = false;
     });
   }, [
@@ -9056,12 +9562,21 @@ export default function Home() {
       setFlightCollisionStatus("Transit safety corridor active.");
       return;
     }
-    if (isDockingApproachActive) {
+    const dockingPhaseActive = (
+      isDockingApproachActive
+      || flightJumpPhase === FLIGHT_PHASE.DOCKING_APPROACH
+    );
+    if (dockingPhaseActive) {
       setFlightCollisionStatus("Docking computer safety corridor active.");
       return;
     }
     if (shipTelemetry?.status !== "in-space") {
       setFlightCollisionStatus("Collision checks active only while in-space");
+      return;
+    }
+
+    if (Math.abs(flightSpeedUnits) > 0.35) {
+      setFlightCollisionStatus("Collision monitor hold while maneuvering.");
       return;
     }
 
@@ -9076,130 +9591,12 @@ export default function Home() {
   }, [
     activeMode,
     fetchCollisionTelemetry,
+    flightJumpPhase,
+    flightSpeedUnits,
     isDockingApproachActive,
     isFlightTransitActive,
     shipTelemetry?.status,
     token,
-  ]);
-
-  useEffect(() => {
-    if (
-      isDockingApproachActive
-      || isFlightTransitActive
-      || activeMode !== "flight"
-      || shipTelemetry?.status !== "in-space"
-      || isSafetyCorridorCollisionStatus(flightCollisionStatus)
-    ) {
-      activeProximityCollisionContactIdRef.current = null;
-      return;
-    }
-
-    const contactById = new Map(scannerContacts.map((contact) => [contact.id, contact]));
-    const thresholdByType: Record<ScannerContactType, number> = {
-      ship: 1.1,
-      station: 1.6,
-      planet: 1.9,
-      moon: 1.7,
-      star: 2.4,
-    };
-
-    let nearestImpactCandidate: {
-      id: string;
-      type: ScannerContactType;
-      name: string;
-      distance: number;
-      threshold: number;
-    } | null = null;
-
-    scannerLiveContacts.forEach((liveContact) => {
-      const scannerContact = contactById.get(liveContact.id);
-      if (!scannerContact) {
-        return;
-      }
-      const threshold = thresholdByType[scannerContact.contact_type];
-      if (!Number.isFinite(threshold) || threshold <= 0) {
-        return;
-      }
-
-      if (liveContact.distance > threshold) {
-        return;
-      }
-
-      if (nearestImpactCandidate === null || liveContact.distance < nearestImpactCandidate.distance) {
-        nearestImpactCandidate = {
-          id: scannerContact.id,
-          type: scannerContact.contact_type,
-          name: scannerContact.name,
-          distance: liveContact.distance,
-          threshold,
-        };
-      }
-    });
-
-    if (nearestImpactCandidate === null) {
-      activeProximityCollisionContactIdRef.current = null;
-      return;
-    }
-
-    const impactCandidate = nearestImpactCandidate as {
-      id: string;
-      type: ScannerContactType;
-      name: string;
-      distance: number;
-      threshold: number;
-    };
-
-    if (activeProximityCollisionContactIdRef.current === impactCandidate.id) {
-      return;
-    }
-
-    activeProximityCollisionContactIdRef.current = impactCandidate.id;
-    const localSpeed = Math.abs(flightSpeedUnits);
-    const severity: "glancing" | "critical" = (
-      impactCandidate.type === "station"
-      || impactCandidate.type === "star"
-      || localSpeed >= 3.5
-      || impactCandidate.distance <= Math.max(0.8, impactCandidate.threshold * 0.55)
-    )
-      ? "critical"
-      : "glancing";
-
-    if (impactCandidate.type === "moon") {
-      return;
-    }
-
-    dispatchFlightAudioEvent("collision.warning_alarm", {
-      contact_id: impactCandidate.id,
-      contact_type: impactCandidate.type,
-      distance_km: impactCandidate.distance,
-      severity,
-    });
-    if (impactCandidate.type === "ship") {
-      dispatchFlightAudioEvent("flight.traffic_flyby", {
-        contact_id: impactCandidate.id,
-        distance_km: impactCandidate.distance,
-      });
-    }
-
-    void handleFlightSceneCollision({
-      contactId: impactCandidate.id,
-      contactType: impactCandidate.type,
-      contactName: impactCandidate.name,
-      distance: impactCandidate.distance,
-      speed: localSpeed,
-      severity,
-    });
-  }, [
-    activeMode,
-    dispatchFlightAudioEvent,
-    flightCollisionStatus,
-    flightSpeedUnits,
-    handleFlightSceneCollision,
-    isDockingApproachActive,
-    isFlightTransitActive,
-    scannerContacts,
-    scannerLiveContacts,
-    shipTelemetry?.status,
   ]);
 
   const handleCommsSend = async () => {
@@ -11759,6 +12156,7 @@ export default function Home() {
                             jumpPhase={flightJumpPhase}
                             jumpProgress={flightJumpProgress}
                             renderProfile={flightRenderProfile}
+                            cameraMode={flightCameraMode}
                             shipVisualKey={shipTelemetry?.ship_visual_key || null}
                             stationShapeKey={
                               shipTelemetry?.docked_station_archetype_shape
@@ -11775,6 +12173,7 @@ export default function Home() {
                             onScannerTelemetryChange={setScannerLiveContacts}
                             onCollision={
                               isDockingApproachActive
+                                || flightJumpPhase === FLIGHT_PHASE.DOCKING_APPROACH
                                 || isFlightTransitActive
                                 || isSafetyCorridorCollisionStatus(flightCollisionStatus)
                                 ? undefined
@@ -11784,6 +12183,8 @@ export default function Home() {
                             waypointContactId={flightWaypointContactId}
                             onDockingApproachProgress={handleFlightDockingApproachProgress}
                             onDockingApproachComplete={handleFlightDockingApproachComplete}
+                            onDockingDebug={handleFlightSceneDockingDebug}
+                            dockingRotationMatchEnabled={isDockingRotationMatchEnabled}
                             spawnDirective={flightSpawnDirective}
                             onSpawnDirectiveApplied={(nonce) => {
                               setFlightSpawnDirective((current) => (
@@ -11923,6 +12324,19 @@ export default function Home() {
                           </button>
                           {showFlightSettings ? (
                             <div className={styles.flightSettingsPopover}>
+                              <label>
+                                <span>View Mode</span>
+                                <select
+                                  data-testid="flight-setting-camera-mode"
+                                  value={flightCameraMode}
+                                  onChange={(event) => {
+                                    setFlightCameraMode(event.target.value as FlightCameraMode);
+                                  }}
+                                >
+                                  <option value="boresight">Boresight</option>
+                                  <option value="cockpit">Cockpit</option>
+                                </select>
+                              </label>
                               <label>
                                 <span>Render Profile</span>
                                 <select

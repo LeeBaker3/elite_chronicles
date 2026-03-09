@@ -609,7 +609,7 @@ def _resolve_local_target_contact(
     system_id: int,
     contact_type: str,
     contact_id: int,
-) -> tuple[str, int, int, int, int | None]:
+) -> tuple[str, int, int, int, int | None, int]:
     """Resolve one local target contact and return label/position/legacy station id."""
 
     normalized_type = contact_type.strip().lower()
@@ -638,6 +638,7 @@ def _resolve_local_target_contact(
             int(station.position_y or 0),
             int(station.position_z or 0),
             int(station.id),
+            0,
         )
 
     body = (
@@ -658,6 +659,7 @@ def _resolve_local_target_contact(
         int(body.position_y or 0),
         int(body.position_z or 0),
         None,
+        int(body.radius_km or 0),
     )
 
 
@@ -1090,6 +1092,66 @@ def _apply_collision_damage(
     return absorbed_by_shields, applied_hull_damage
 
 
+def _resolve_collision_outcome(
+    *,
+    object_type: str,
+    severity: str,
+    recovered: bool,
+    destruction_triggered: bool,
+) -> str:
+    """Resolve a deterministic typed outcome for collision telemetry."""
+
+    if recovered:
+        return "checkpoint_recovery"
+
+    if object_type == "star":
+        if destruction_triggered:
+            return "thermal_cascade"
+        return "thermal_breach" if severity == "critical" else "thermal_shear"
+
+    if object_type == "planet":
+        return "planetary_impact"
+
+    if object_type == "station":
+        if destruction_triggered:
+            return "station_catastrophic_impact"
+        return "station_glancing_impact"
+
+    if object_type == "ship":
+        return "ship_heavy_impact" if severity == "critical" else "ship_glancing_impact"
+
+    return "collision_impact"
+
+
+def _collision_sfx_event_keys(
+    *,
+    severity: str,
+    object_type: str,
+    destruction_triggered: bool,
+    recovered: bool,
+) -> list[str]:
+    """Build canonical audio event keys for a collision response."""
+
+    event_keys: list[str] = [
+        "collision.critical_hit" if severity == "critical" else "collision.glancing_hit",
+    ]
+
+    if object_type == "star" or destruction_triggered:
+        event_keys.append("collision.warning_alarm")
+
+    if recovered:
+        event_keys.extend([
+            "ops.crash_recovery_start",
+            "ops.crash_recovery_complete",
+        ])
+
+    deduplicated: list[str] = []
+    for event_key in event_keys:
+        if event_key not in deduplicated:
+            deduplicated.append(event_key)
+    return deduplicated
+
+
 def _scanner_scene_coordinates(
     *,
     relative_x: int,
@@ -1392,6 +1454,9 @@ def get_ship_local_contacts(
                 radius_km=int(body.radius_km or 0),
                 orbit_radius_km=int(body.orbit_radius_km or 0),
                 parent_body_id=body.parent_body_id,
+                relative_x_km=relative_x,
+                relative_y_km=relative_y,
+                relative_z_km=relative_z,
                 scene_x=scene_x,
                 scene_y=scene_y,
                 scene_z=scene_z,
@@ -1463,6 +1528,9 @@ def get_ship_local_contacts(
                 station_archetype_shape=(
                     station_archetype.shape if station_archetype else None
                 ),
+                relative_x_km=relative_station_x,
+                relative_y_km=relative_station_y,
+                relative_z_km=relative_station_z,
                 scene_x=station_scene_x,
                 scene_y=station_scene_y,
                 scene_z=station_scene_z,
@@ -1523,6 +1591,9 @@ def get_ship_local_contacts(
                     contact_ship,
                     archetype_visual_map=ship_archetype_visual_map,
                 ),
+                relative_x_km=relative_ship_x,
+                relative_y_km=relative_ship_y,
+                relative_z_km=relative_ship_z,
                 scene_x=ship_scene_x,
                 scene_y=ship_scene_y,
                 scene_z=ship_scene_z,
@@ -2142,6 +2213,7 @@ def update_local_target(
         target_y,
         target_z,
         legacy_station_id,
+        target_radius_km,
     ) = _resolve_local_target_contact(
         db=db,
         system_id=int(system.id),
@@ -2187,11 +2259,14 @@ def update_local_target(
     vertical_km = _deterministic_offset_from_seed(seed_base * 11, 2, 5)
     lateral_sign = -1 if (seed_base % 2 == 0) else 1
     vertical_sign = -1 if ((seed_base // 3) % 2 == 0) else 1
+    longitudinal_offset_km = standoff_km
+    if contact_type in {"planet", "moon", "star"}:
+        longitudinal_offset_km += max(int(target_radius_km), 0)
 
-    ship.position_x = target_x + standoff_km
+    ship.position_x = target_x + longitudinal_offset_km
     ship.position_y = target_y + (vertical_sign * vertical_km)
     ship.position_z = target_z + (lateral_sign * lateral_km)
-    ship.velocity_x = max(1, standoff_km // 5)
+    ship.velocity_x = max(1, longitudinal_offset_km // 5)
     ship.velocity_y = 0
     ship.velocity_z = 0
     ship.status = "in-space"
@@ -2450,13 +2525,27 @@ def check_ship_collision(
     )
 
     recovered = False
-    if severity == "critical" and ship.hull_current <= 0:
+    destruction_triggered = severity == "critical" and ship.hull_current <= 0
+    if destruction_triggered:
         if ship.last_safe_recorded_at is not None:
             _restore_ship_to_safe_checkpoint(ship, current_user)
             ship.crash_recovery_count = int(ship.crash_recovery_count or 0) + 1
             ship.hull_current = max(
                 int(ship.hull_current or 0), max(ship.hull_max // 2, 1))
             recovered = True
+
+    resolved_outcome = _resolve_collision_outcome(
+        object_type=object_type,
+        severity=severity,
+        recovered=recovered,
+        destruction_triggered=destruction_triggered,
+    )
+    sfx_event_keys = _collision_sfx_event_keys(
+        severity=severity,
+        object_type=object_type,
+        destruction_triggered=destruction_triggered,
+        recovered=recovered,
+    )
 
     ship.version = (ship.version or 0) + 1
     _record_ship_operation(
@@ -2493,9 +2582,13 @@ def check_ship_collision(
         object_type=object_type,
         object_id=object_id,
         object_name=object_name,
+        collision_context_type=object_type,
+        resolved_outcome=resolved_outcome,
+        destruction_triggered=destruction_triggered,
         distance_km=round(distance_km, 2),
         shields_damage=shields_damage,
         hull_damage=hull_damage,
+        sfx_event_keys=sfx_event_keys,
         recovered=recovered,
         message=(
             f"{severity.title()} impact: {object_name} ({distance_km:.1f}km) · "

@@ -10,7 +10,9 @@ vi.mock("next/dynamic", () => ({
     function MockFlightScene(props: {
       focusedContact: { name?: string } | null;
       jumpPhase?: string;
+      cameraMode?: "boresight" | "cockpit";
       showContactLabels?: boolean;
+      waypointContactId?: string | null;
       celestialAnchors?: Array<{ id: string; body_kind?: string }>;
       dockingApproachContactId?: string | null;
       onDockingApproachComplete?: () => void;
@@ -38,7 +40,9 @@ vi.mock("next/dynamic", () => ({
         onDockingApproachComplete,
         focusedContact,
         jumpPhase,
+        cameraMode,
         showContactLabels,
+        waypointContactId,
         celestialAnchors,
         scannerContacts,
         onScannerTelemetryChange,
@@ -123,8 +127,14 @@ vi.mock("next/dynamic", () => ({
           <div data-testid="flight-scene-jump-phase">
             {jumpPhase ?? "idle"}
           </div>
+          <div data-testid="flight-scene-camera-mode">
+            {cameraMode ?? "boresight"}
+          </div>
           <div data-testid="flight-scene-show-contact-labels">
             {showContactLabels ? "on" : "off"}
+          </div>
+          <div data-testid="flight-scene-waypoint-contact-id">
+            {waypointContactId ?? "none"}
           </div>
           <div data-testid="flight-scene-moon-anchor-count">
             {String(moonAnchorCount)}
@@ -752,7 +762,7 @@ describe("Home scanner to flight scene wiring", () => {
     expect(planetRow.textContent).toContain("1.60M km");
   });
 
-  it("updates scanner contact row distance from live telemetry updates", async () => {
+  it("keeps scanner contact row distance pinned to snapshot telemetry", async () => {
     scannerContactsPayload = [
       {
         id: "station-101",
@@ -790,7 +800,7 @@ describe("Home scanner to flight scene wiring", () => {
 
     await waitFor(() => {
       const stationRow = screen.getByTestId("scanner-contact-row-station-101");
-      expect(stationRow.textContent).toContain("27.0 km");
+      expect(stationRow.textContent).toContain("42.0 km");
     });
 
     (globalThis as unknown as {
@@ -809,7 +819,7 @@ describe("Home scanner to flight scene wiring", () => {
 
     await waitFor(() => {
       const stationRow = screen.getByTestId("scanner-contact-row-station-101");
-      expect(stationRow.textContent).toContain("5.0 km");
+      expect(stationRow.textContent).toContain("42.0 km");
     });
   });
 
@@ -1107,6 +1117,46 @@ describe("Home scanner to flight scene wiring", () => {
     fireEvent.click(labelsToggle);
 
     expect(screen.getByTestId("flight-scene-show-contact-labels").textContent).toBe("on");
+  });
+
+  it("persists flight camera mode selection", async () => {
+    const firstRender = render(
+      <ToastProvider>
+        <Home />
+      </ToastProvider>,
+    );
+
+    const flightModeButtons = await screen.findAllByRole("button", {
+      name: /^Flight$/,
+    });
+    fireEvent.click(flightModeButtons[0]);
+
+    expect(screen.getByTestId("flight-scene-camera-mode").textContent).toBe("boresight");
+
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    const cameraModeSelect = await screen.findByTestId("flight-setting-camera-mode");
+    fireEvent.change(cameraModeSelect, { target: { value: "cockpit" } });
+
+    expect(window.localStorage.getItem("elite_flight_camera_mode")).toBe("cockpit");
+    expect(screen.getByTestId("flight-scene-camera-mode").textContent).toBe("cockpit");
+
+    firstRender.unmount();
+
+    render(
+      <ToastProvider>
+        <Home />
+      </ToastProvider>,
+    );
+
+    const flightModeButtonsReloaded = await screen.findAllByRole("button", {
+      name: /^Flight$/,
+    });
+    fireEvent.click(flightModeButtonsReloaded[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+
+    expect((await screen.findByTestId("flight-setting-camera-mode") as HTMLSelectElement).value)
+      .toBe("cockpit");
+    expect(screen.getByTestId("flight-scene-camera-mode").textContent).toBe("cockpit");
   });
 
   it("persists flight audio settings toggles", async () => {
@@ -2417,6 +2467,12 @@ describe("Home scanner to flight scene wiring", () => {
     }))[0];
     fireEvent.click(flightModeButton);
 
+    await waitFor(() => {
+      expect(screen.getByTestId("flight-scene-waypoint-contact-id").textContent).toBe(
+        "planet-201",
+      );
+    });
+
     const jumpButton = screen.getByRole("button", { name: /^System Jump$/i });
     expect(jumpButton).toBeEnabled();
     fireEvent.click(jumpButton);
@@ -2901,7 +2957,7 @@ describe("Home scanner to flight scene wiring", () => {
     });
   });
 
-  it("plots in-view scanner blips using camera FOV alignment", async () => {
+  it("plots scanner blips using canonical plane projection", async () => {
     render(
       <ToastProvider>
         <Home />
@@ -2918,7 +2974,7 @@ describe("Home scanner to flight scene wiring", () => {
     await waitFor(() => {
       const leftValue = Number.parseFloat(stationBlip.style.left.replace("%", ""));
       expect(Number.isFinite(leftValue)).toBe(true);
-      expect(leftValue).toBeGreaterThan(50);
+      expect(leftValue).toBeLessThan(50);
     });
   });
 

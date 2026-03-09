@@ -5,6 +5,7 @@ import {
     advanceManualPitch,
     desiredDockingPitchFromDirection,
     desiredDockingYawFromDirection,
+    projectCameraSpacePointToNdc,
     shortestAngleDelta,
 } from "./FlightScene.math";
 
@@ -70,5 +71,49 @@ describe("FlightScene docking attitude convergence", () => {
         expect(finalYawError).toBeLessThan(initialYawError * 0.25);
         expect(finalPitchError).toBeLessThan(initialPitchError * 0.25);
         expect(pitch).toBeLessThan(0);
+    });
+});
+
+describe("FlightScene docking screen framing math", () => {
+    it("treats a centered point ahead of the camera as visible", () => {
+        const projected = projectCameraSpacePointToNdc({
+            cameraSpaceX: 0,
+            cameraSpaceY: 0,
+            cameraSpaceZ: -10,
+            verticalFovDegrees: 30,
+            aspectRatio: 16 / 9,
+        });
+
+        expect(projected.inFront).toBe(true);
+        expect(projected.inView).toBe(true);
+        expect(projected.ndcX).toBeCloseTo(0, 6);
+        expect(projected.ndcY).toBeCloseTo(0, 6);
+    });
+
+    it("rejects a point outside the frustum bounds", () => {
+        const projected = projectCameraSpacePointToNdc({
+            cameraSpaceX: 6,
+            cameraSpaceY: 0,
+            cameraSpaceZ: -4,
+            verticalFovDegrees: 30,
+            aspectRatio: 16 / 9,
+        });
+
+        expect(projected.inFront).toBe(true);
+        expect(projected.inView).toBe(false);
+        expect(projected.ndcX).toBeGreaterThan(1);
+    });
+
+    it("rejects a point behind the camera", () => {
+        const projected = projectCameraSpacePointToNdc({
+            cameraSpaceX: 0,
+            cameraSpaceY: 0,
+            cameraSpaceZ: 2,
+            verticalFovDegrees: 30,
+            aspectRatio: 16 / 9,
+        });
+
+        expect(projected.inFront).toBe(false);
+        expect(projected.inView).toBe(false);
     });
 });
