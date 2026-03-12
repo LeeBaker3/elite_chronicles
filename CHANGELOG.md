@@ -43,6 +43,8 @@ All notable changes to this project are documented in this file.
 - Backend tests for bootstrap real-name extraction/selection behavior (`backend/tests/test_bootstrap_known_star_systems.py`).
 
 ### Changed
+- Documented Batch 22 local-space snapshot compatibility fields and docking distance labeling behavior in the root and backend READMEs.
+- Clarified Batch 22 implementation status in the planning doc and added page-level regression coverage for `PORT` versus `SURFACE` docking distance labels during active docking approach.
 - Migrated frontend flight/scanner/chart/admin/comms/trade media playback from
   generated tone data URIs to manifest-resolved WAV assets in
   `frontend/public/audio/sfx`.

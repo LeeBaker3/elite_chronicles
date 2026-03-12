@@ -11,9 +11,16 @@ vi.mock("next/dynamic", () => ({
       focusedContact: { name?: string } | null;
       jumpPhase?: string;
       cameraMode?: "boresight" | "cockpit";
+      scannerRangeKm?: number;
       showContactLabels?: boolean;
       waypointContactId?: string | null;
-      celestialAnchors?: Array<{ id: string; body_kind?: string }>;
+      celestialAnchors?: Array<{
+        id: string;
+        body_kind?: string;
+        relative_x_km?: number;
+        relative_y_km?: number;
+        relative_z_km?: number;
+      }>;
       dockingApproachContactId?: string | null;
       onDockingApproachComplete?: () => void;
       scannerContacts?: Array<{ id: string; distance_km?: number }>;
@@ -22,6 +29,9 @@ vi.mock("next/dynamic", () => ({
         relative_x: number;
         relative_y: number;
         relative_z: number;
+        relative_x_km?: number;
+        relative_y_km?: number;
+        relative_z_km?: number;
         forward_distance: number;
         plane_x: number;
         plane_y: number;
@@ -41,6 +51,7 @@ vi.mock("next/dynamic", () => ({
         focusedContact,
         jumpPhase,
         cameraMode,
+        scannerRangeKm,
         showContactLabels,
         waypointContactId,
         celestialAnchors,
@@ -83,6 +94,9 @@ vi.mock("next/dynamic", () => ({
             relative_x: isPrimaryStation ? 90 : (index + 1) * 10,
             relative_y: 0,
             relative_z: -60,
+            relative_x_km: isPrimaryStation ? 90 : (index + 1) * 10,
+            relative_y_km: 0,
+            relative_z_km: -60,
             forward_distance: 60,
             plane_x: isPrimaryStation ? -0.9 : 0.2,
             plane_y: 0.4,
@@ -106,7 +120,12 @@ vi.mock("next/dynamic", () => ({
       }, [onScannerTelemetryChange, scannerContacts]);
 
       useEffect(() => {
-        if (!dockingApproachContactId) {
+        const disableDockingApproachAutoComplete = Boolean(
+          (globalThis as unknown as {
+            __disableDockingApproachAutoComplete?: boolean;
+          }).__disableDockingApproachAutoComplete,
+        );
+        if (!dockingApproachContactId || disableDockingApproachAutoComplete) {
           return;
         }
 
@@ -130,6 +149,9 @@ vi.mock("next/dynamic", () => ({
           <div data-testid="flight-scene-camera-mode">
             {cameraMode ?? "boresight"}
           </div>
+          <div data-testid="flight-scene-scanner-range">
+            {String(scannerRangeKm ?? 25)}
+          </div>
           <div data-testid="flight-scene-show-contact-labels">
             {showContactLabels ? "on" : "off"}
           </div>
@@ -139,6 +161,20 @@ vi.mock("next/dynamic", () => ({
           <div data-testid="flight-scene-moon-anchor-count">
             {String(moonAnchorCount)}
           </div>
+          {Array.isArray(celestialAnchors)
+            ? celestialAnchors.map((anchor) => (
+              <div
+                key={anchor.id}
+                data-testid={`flight-scene-celestial-anchor-${anchor.id}`}
+              >
+                {[
+                  anchor.relative_x_km ?? "na",
+                  anchor.relative_y_km ?? "na",
+                  anchor.relative_z_km ?? "na",
+                ].join(",")}
+              </div>
+            ))
+            : null}
         </>
       );
     }
@@ -150,6 +186,7 @@ vi.mock("next/dynamic", () => ({
 describe("Home scanner to flight scene wiring", () => {
   let shipTelemetryPayload: Record<string, unknown>;
   let scannerContactsPayload: Array<Record<string, unknown>>;
+  let scannerContactsGenerationVersion: number;
   let localChartPayload: Record<string, unknown>;
   let localChartStatusCode: number;
   let localChartErrorMessage: string;
@@ -164,6 +201,7 @@ describe("Home scanner to flight scene wiring", () => {
     window.localStorage.setItem("elite_token", "test-token");
     window.localStorage.setItem("elite_user_id", "1");
     (globalThis as unknown as { __scannerTelemetryOverrides?: Record<string, unknown> }).__scannerTelemetryOverrides = {};
+    (globalThis as unknown as { __disableDockingApproachAutoComplete?: boolean }).__disableDockingApproachAutoComplete = false;
 
     shipTelemetryPayload = {
       id: 1,
@@ -614,6 +652,50 @@ describe("Home scanner to flight scene wiring", () => {
     });
 
     expect(screen.getByText("Dock Target Range")).toBeInTheDocument();
+  });
+
+  it("labels docking approach range using PORT mode for the active approach target", async () => {
+    (globalThis as unknown as {
+      __scannerTelemetryOverrides?: Record<string, Partial<{
+        distance: number;
+        distance_mode: "surface" | "port";
+      }>>;
+    }).__scannerTelemetryOverrides = {
+      "station-101": {
+        distance: 3.4,
+        distance_mode: "port",
+      },
+    };
+    (globalThis as unknown as { __disableDockingApproachAutoComplete?: boolean }).__disableDockingApproachAutoComplete = true;
+
+    render(
+      <ToastProvider>
+        <Home />
+      </ToastProvider>,
+    );
+
+    const flightModeButtons = await screen.findAllByRole("button", {
+      name: /^Flight$/,
+    });
+    fireEvent.click(flightModeButtons[0]);
+
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("flight-scene-focused-contact").textContent,
+      ).toBe("Vega Tradeport");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /^Dock$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /^Cancel Docking$/i })).toBeInTheDocument();
+      expect(
+        screen.getByText(/Vega Tradeport · 3\.4 km PORT \/ 40\.0 km · IN RANGE/),
+      ).toBeInTheDocument();
+    });
+
+    expect(screen.getByText(/Docking computer active: autopilot approach is guiding to docking port\./)).toBeInTheDocument();
+    expect(dockRequestBodies.length).toBe(0);
   });
 
   it("applies scanner grid range cap and allows expanding range via preset selector", async () => {

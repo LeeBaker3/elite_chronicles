@@ -43,3 +43,5 @@ cd backend && SITE_PACKAGES=$(../.venv/bin/python -c 'import site; print(site.ge
 
 - `GET /api/ships/{ship_id}/operations` returns human-readable `details`; dock/undock/jump entries resolve station names with `Station #<id>` fallback only if a name is unavailable.
 - `POST /api/ships/{ship_id}/jump` now arrives in destination system deep-space (no auto-dock), so docking remains an explicit follow-up step before trading.
+- `GET /api/ships/{ship_id}/local-contacts` and `GET /api/systems/{system_id}/local-chart` expose additive `snapshot_version` and `snapshot_generated_at` fields so the frontend can reject mixed scanner/chart state snapshots during active flight.
+- Docking distance semantics are explicit in flight surfaces: scanner/list views remain stable on center/surface-style distance labels, while active docking approach UI may switch to `PORT` distance labeling for the current approach target.
