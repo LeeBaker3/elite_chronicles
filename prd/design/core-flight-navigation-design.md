@@ -103,6 +103,9 @@ Owners: Product + Backend + Frontend
     `ship_visual_key`
   - canonical `relative_x_km`, `relative_y_km`, `relative_z_km`
   - compressed `scene_x`, `scene_y`, `scene_z` fallback coordinates
+- Local-space payloads also carry shared snapshot metadata:
+  - `snapshot_version`
+  - `snapshot_generated_at`
 - Rule:
   - If a contact has `relative_*_km`, all flight, scanner, marker, and chart
     systems must prefer that data over `scene_*`.
@@ -133,6 +136,8 @@ Owners: Product + Backend + Frontend
 - `GET /api/systems/{system_id}/local-chart` provides the structured star,
   planets, moons, stations, and mutable local target state for the current
   system.
+- Scanner and local-chart payloads must expose compatible snapshot metadata so
+  the frontend can reject mixed-snapshot reconstruction.
 - The frontend local chart reconstructs contact positions by preferring:
   1. anchored world position derived from a known station world coordinate plus
      live `relative_*_km`
@@ -148,8 +153,12 @@ Owners: Product + Backend + Frontend
 - The 3D flight scene uses contact identity shared with scanner/chart state.
 - Rendering order of trust for positions:
   1. `relative_*_km` for near-field local rendering
-  2. synthesized celestial anchor positions from local chart + contact parity
+  2. synthesized celestial anchor positions that preserve the same physical
+     relative km basis as scanner/chart contacts
   3. `scene_*` only as fallback presentation data
+- Current batch policy:
+  - celestial anchors render from physical ship-relative km, not a separate
+    compressed orbit-layout projection
 - Marker policy:
   - focused contact marker and waypoint marker resolve from the same canonical
     contact ID model
@@ -262,6 +271,7 @@ Owners: Product + Backend + Frontend
 | Field Group | Purpose | Canonical Use |
 |---|---|---|
 | `id`, `contact_type`, `name` | Stable identity and display naming | Shared across scanner, chart, flight, waypoints |
+| `snapshot_version`, `snapshot_generated_at` | Snapshot compatibility metadata | Detect and reject mixed scanner/chart states |
 | `distance_km` | Snapshot contact distance | Scanner lists, chart rows, status text |
 | `relative_x_km`, `relative_y_km`, `relative_z_km` | Physical ship-relative position in km | Primary input for render, marker, and chart alignment |
 | `scene_x`, `scene_y`, `scene_z` | Compressed presentation position | Fallback only |

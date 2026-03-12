@@ -155,6 +155,8 @@ class ShipLocalContactsResponse(BaseModel):
     system_id: int
     system_name: str
     generation_version: int
+    snapshot_version: str
+    snapshot_generated_at: datetime
     contacts: list[LocalScannerContact]
 
 

@@ -429,6 +429,28 @@ def test_local_target_lock_and_transfer_for_planet(client, db_session):
     )
     assert center_distance_km > float(planet_body.radius_km or 0)
 
+    post_transfer_contacts = client.get(
+        f"/api/ships/{state['ship_id']}/local-contacts",
+        headers=headers,
+    )
+    assert post_transfer_contacts.status_code == 200
+    post_transfer_payload = post_transfer_contacts.json()
+    target_contact = next(
+        (
+            entry
+            for entry in post_transfer_payload["contacts"]
+            if entry["id"] == f"planet-{planet_id}"
+        ),
+        None,
+    )
+    assert target_contact is not None
+    expected_surface_distance_km = max(
+        0,
+        int(round(center_distance_km - float(planet_body.radius_km or 0))),
+    )
+    assert abs(int(target_contact["distance_km"]) - expected_surface_distance_km) <= 1
+    assert int(target_contact["distance_km"]) < 64
+
 
 def test_ship_visual_key_uses_archetype_lookup_not_ship_name(client, db_session):
     headers = auth_headers_for(client, "visual-key@example.com", "visual-key")
@@ -1151,9 +1173,13 @@ def test_ship_jump_emergence_respects_100000km_exclusion(client, db_session):
         StarSystem.id == state["system_id"]).first()
     assert system is not None
 
-    exclusion_points: list[tuple[int, int, int]] = [
-        (int(system.position_x or 0), int(
-            system.position_y or 0), int(system.position_z or 0))
+    exclusion_points: list[tuple[int, int, int, int]] = [
+        (
+            int(system.position_x or 0),
+            int(system.position_y or 0),
+            int(system.position_z or 0),
+            0,
+        )
     ]
 
     bodies = (
@@ -1162,8 +1188,12 @@ def test_ship_jump_emergence_respects_100000km_exclusion(client, db_session):
         .all()
     )
     exclusion_points.extend(
-        (int(body.position_x or 0), int(
-            body.position_y or 0), int(body.position_z or 0))
+        (
+            int(body.position_x or 0),
+            int(body.position_y or 0),
+            int(body.position_z or 0),
+            max(0, int(body.radius_km or 0)),
+        )
         for body in bodies
     )
 
@@ -1173,8 +1203,12 @@ def test_ship_jump_emergence_respects_100000km_exclusion(client, db_session):
         .all()
     )
     exclusion_points.extend(
-        (int(station.position_x or 0), int(
-            station.position_y or 0), int(station.position_z or 0))
+        (
+            int(station.position_x or 0),
+            int(station.position_y or 0),
+            int(station.position_z or 0),
+            0,
+        )
         for station in stations
     )
 
@@ -1183,8 +1217,8 @@ def test_ship_jump_emergence_respects_100000km_exclusion(client, db_session):
             ((int(ship.position_x or 0) - point_x) ** 2)
             + ((int(ship.position_y or 0) - point_y) ** 2)
             + ((int(ship.position_z or 0) - point_z) ** 2)
-        )
-        for point_x, point_y, point_z in exclusion_points
+        ) - exclusion_radius_km
+        for point_x, point_y, point_z, exclusion_radius_km in exclusion_points
     )
     assert min_distance >= 100_000
 

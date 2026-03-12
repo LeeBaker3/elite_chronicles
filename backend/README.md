@@ -215,9 +215,12 @@ cd backend
 - `POST /api/ships/{ship_id}/refuel` refuels a docked ship (full or partial via `amount`).
 - `POST /api/ships/{ship_id}/jump` consumes fuel and moves an in-space ship into destination system deep-space (supports `destination_station_id` and/or `destination_system_id`), requiring an explicit follow-up dock action for station services/trade.
 - `POST /api/ships/{ship_id}/crash-recovery` restores ship and player location to the latest safe checkpoint captured on safe events (dock, undock, jump).
+- `GET /api/ships/{ship_id}/local-contacts` returns local scanner contacts plus additive `snapshot_version` and `snapshot_generated_at` fields used for scanner/chart snapshot compatibility.
+- `GET /api/systems/{system_id}/local-chart` returns local chart bodies, mutable local-target state, and matching additive `snapshot_version` and `snapshot_generated_at` fields.
 - `GET /api/ships/{ship_id}/operations` returns recent operation log entries; `details` is a human-readable message and now resolves station names for dock/undock/jump events (with `Station #<id>` fallback only when a name is unavailable).
 - `GET /api/markets/{system_id}/summary` returns per-station aggregate market summary rows, including freshness fields (`updated_seconds_ago`, `stale`) and supports optional `simulate_ticks` read-only projection.
 - Interstellar comms messages are now queued with delivery timestamps and automatically transition from `queued` to `delivered` when due (`/api/comms` message/channel reads trigger due-message release).
+- Docking distance mode remains frontend-derived in the current Batch 22 implementation: backend contracts expose stable contact distances and snapshot metadata, while the focused approach HUD can label the active target using docking-port distance when that mode is in effect.
 
 ## Economy + Admin Logs Notes
 

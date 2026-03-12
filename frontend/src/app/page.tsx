@@ -486,8 +486,6 @@ const JUMP_FUEL_COST = 20;
 const CELESTIAL_DISTANCE_REALISM_MULTIPLIER = 1;
 const LOCAL_TRANSFER_JUMP_RECOMMENDED_DISTANCE_KM = 1_500_000;
 const HYPERSPACE_INITIATION_MIN_CLEARANCE_KM = 100;
-const STATION_SCENE_TO_WORLD_SCALE_XZ = 1 / 0.11;
-const STATION_SCENE_TO_WORLD_SCALE_Y = 1 / 0.08;
 
 const getFuelAlertLevel = (fuelPercent: number): FuelAlertLevel => {
   if (fuelPercent <= FUEL_CRITICAL_THRESHOLD_PERCENT) {
@@ -733,6 +731,8 @@ type ScannerContactsResponse = {
   system_id: number;
   system_name: string;
   generation_version: number;
+  snapshot_version?: string;
+  snapshot_generated_at?: string | null;
   contacts: ScannerContact[];
 };
 
@@ -780,6 +780,8 @@ type LocalChartStation = {
 };
 
 type LocalChartResponse = {
+  snapshot_version?: string;
+  snapshot_generated_at?: string | null;
   system: {
     id: number;
     name: string;
@@ -1282,10 +1284,84 @@ const countLocalChartRows = (payload: LocalChartResponse): number => {
   return 1 + payload.planets.length + moonCount + payload.stations.length;
 };
 
+const buildLocalSpaceSnapshotVersion = (
+  systemId: number | null | undefined,
+  generationVersion: number | null | undefined,
+  providedVersion?: string | null,
+): string | null => {
+  const normalizedProvidedVersion = (providedVersion || "").trim();
+  if (normalizedProvidedVersion) {
+    return normalizedProvidedVersion;
+  }
+
+  if (!Number.isInteger(systemId) || !Number.isInteger(generationVersion)) {
+    return null;
+  }
+
+  return `system-${systemId}-gen-${generationVersion}`;
+};
+
+const areSnapshotVersionsCompatible = (
+  leftSnapshotVersion: string | null | undefined,
+  rightSnapshotVersion: string | null | undefined,
+): boolean => {
+  if (!leftSnapshotVersion || !rightSnapshotVersion) {
+    return true;
+  }
+
+  return leftSnapshotVersion === rightSnapshotVersion;
+};
+
+const LOCAL_CHART_SNAPSHOT_MISMATCH_MESSAGE = "Local chart awaiting compatible snapshot.";
+
+const resolveRelativeKmVector = (
+  ...sources: Array<{
+    relative_x_km?: number;
+    relative_y_km?: number;
+    relative_z_km?: number;
+  } | null | undefined>
+): { x: number; y: number; z: number } | null => {
+  for (const source of sources) {
+    if (
+      source
+      &&
+      Number.isFinite(source?.relative_x_km)
+      && Number.isFinite(source?.relative_y_km)
+      && Number.isFinite(source?.relative_z_km)
+    ) {
+      return {
+        x: Number(source.relative_x_km),
+        y: Number(source.relative_y_km),
+        z: Number(source.relative_z_km),
+      };
+    }
+  }
+
+  return null;
+};
+
+const normalizeScannerContactsPayload = (
+  payload: ScannerContactsResponse,
+): ScannerContactsResponse => ({
+  ...payload,
+  snapshot_version: buildLocalSpaceSnapshotVersion(
+    payload.system_id,
+    payload.generation_version,
+    payload.snapshot_version,
+  ) ?? undefined,
+  snapshot_generated_at: payload.snapshot_generated_at ?? null,
+});
+
 const normalizeLocalChartPayload = (payload: LocalChartResponse): LocalChartResponse => {
   const mutableState = payload.mutable_state;
   return {
     ...payload,
+    snapshot_version: buildLocalSpaceSnapshotVersion(
+      payload.system.id,
+      payload.system.generation_version,
+      payload.snapshot_version,
+    ) ?? undefined,
+    snapshot_generated_at: payload.snapshot_generated_at ?? null,
     system: {
       ...payload.system,
       contract_version: payload.system.contract_version || "local-chart.v0",
@@ -1314,11 +1390,6 @@ const normalizeLocalChartPayload = (payload: LocalChartResponse): LocalChartResp
     },
   };
 };
-
-const FLIGHT_CELESTIAL_SCENE_RADIUS_UNITS = 560;
-const FLIGHT_CELESTIAL_ORBIT_EXPONENT = 1.2;
-const FLIGHT_CELESTIAL_MIN_ORBIT_UNITS = 90;
-const FLIGHT_CELESTIAL_MIN_ORBIT_STEP_UNITS = 68;
 
 const buildFlightCelestialAnchors = (
   localChartData: LocalChartResponse,
@@ -1378,47 +1449,14 @@ const buildFlightCelestialAnchors = (
     rel_z: body.position_z - star.position_z,
   }));
 
-  const maxExtent = Math.max(
-    ...relativeBodies.map((body) => Math.hypot(body.rel_x, body.rel_y, body.rel_z)),
-    1,
-  );
-  const orbitRadiusByBodyId = new Map<string, number>();
-  const sortedBodies = [...relativeBodies]
-    .filter((body) => body.body_kind !== "star")
-    .sort((left, right) => {
-      const leftDistance = Math.hypot(left.rel_x, left.rel_y, left.rel_z);
-      const rightDistance = Math.hypot(right.rel_x, right.rel_y, right.rel_z);
-      return leftDistance - rightDistance;
-    });
-
-  let lastOrbitUnits = FLIGHT_CELESTIAL_MIN_ORBIT_UNITS - FLIGHT_CELESTIAL_MIN_ORBIT_STEP_UNITS;
-  sortedBodies.forEach((body) => {
-    const fallbackDistanceKm = Math.hypot(body.rel_x, body.rel_y, body.rel_z);
-    const normalizedDistance = Math.min(
-      1,
-      Math.max(0, fallbackDistanceKm / maxExtent),
-    );
-    const easedRadiusUnits =
-      Math.pow(normalizedDistance, FLIGHT_CELESTIAL_ORBIT_EXPONENT)
-      * FLIGHT_CELESTIAL_SCENE_RADIUS_UNITS;
-    const baseOrbitUnits = Math.max(FLIGHT_CELESTIAL_MIN_ORBIT_UNITS, easedRadiusUnits);
-    const enforcedOrbitUnits = Math.max(
-      baseOrbitUnits,
-      lastOrbitUnits + FLIGHT_CELESTIAL_MIN_ORBIT_STEP_UNITS,
-    );
-    orbitRadiusByBodyId.set(body.id, enforcedOrbitUnits);
-    lastOrbitUnits = enforcedOrbitUnits;
-  });
-
   return relativeBodies.map((body) => {
     const scannerMatch = scannerContactById.get(body.id);
     const fallbackDistanceKm = Math.hypot(body.rel_x, body.rel_y, body.rel_z);
-    const orbitRadiusUnits = body.body_kind === "star"
-      ? 0
-      : (orbitRadiusByBodyId.get(body.id) ?? FLIGHT_CELESTIAL_MIN_ORBIT_UNITS);
-    const directionScale = fallbackDistanceKm > 0
-      ? orbitRadiusUnits / fallbackDistanceKm
-      : 0;
+    const relativePosition = resolveRelativeKmVector(scannerMatch) ?? {
+      x: body.rel_x,
+      y: body.rel_y,
+      z: body.rel_z,
+    };
 
     return {
       id: body.id,
@@ -1430,12 +1468,12 @@ const buildFlightCelestialAnchors = (
           : "planet",
       distance_km: scannerMatch?.distance_km ?? fallbackDistanceKm,
       orbiting_planet_name: scannerMatch?.orbiting_planet_name ?? null,
-      relative_x_km: body.rel_x,
-      relative_y_km: body.rel_y,
-      relative_z_km: body.rel_z,
-      presentation_x: body.rel_x * directionScale,
-      presentation_y: body.rel_y * directionScale,
-      presentation_z: body.rel_z * directionScale,
+      relative_x_km: relativePosition.x,
+      relative_y_km: relativePosition.y,
+      relative_z_km: relativePosition.z,
+      presentation_x: relativePosition.x,
+      presentation_y: relativePosition.y,
+      presentation_z: relativePosition.z,
       body_kind: body.body_kind,
       body_type: body.body_type,
       radius_km: body.radius_km,
@@ -1470,6 +1508,7 @@ export default function Home() {
   const [scannerSystemId, setScannerSystemId] = useState<number | null>(null);
   const [scannerSystemName, setScannerSystemName] = useState<string | null>(null);
   const [, setScannerGenerationVersion] = useState<number | null>(null);
+  const [scannerSnapshotVersion, setScannerSnapshotVersion] = useState<string | null>(null);
   const [scannerContactsLoading, setScannerContactsLoading] = useState(false);
   const [scannerContactsError, setScannerContactsError] = useState<string | null>(null);
   const [scannerSelectedContactId, setScannerSelectedContactId] = useState<string>(() => {
@@ -1506,6 +1545,13 @@ export default function Home() {
     }
   });
   const [scannerLiveContacts, setScannerLiveContacts] = useState<ScannerLiveContact[]>([]);
+  const scannerLiveContactMap = useMemo(() => {
+    const map = new Map<string, ScannerLiveContact>();
+    scannerLiveContacts.forEach((contact) => {
+      map.set(contact.id, contact);
+    });
+    return map;
+  }, [scannerLiveContacts]);
   const [localChartData, setLocalChartData] = useState<LocalChartResponse | null>(null);
   const [localChartLoading, setLocalChartLoading] = useState(false);
   const [localChartError, setLocalChartError] = useState<string | null>(null);
@@ -3218,6 +3264,7 @@ export default function Home() {
       setScannerSystemId(null);
       setScannerSystemName(null);
       setScannerGenerationVersion(null);
+      setScannerSnapshotVersion(null);
       setScannerContactsError(null);
       setScannerSelectedContactId("");
       setScannerLiveContacts([]);
@@ -3232,6 +3279,7 @@ export default function Home() {
       setScannerSystemId(null);
       setScannerSystemName(null);
       setScannerGenerationVersion(null);
+      setScannerSnapshotVersion(null);
       setScannerContactsError("Ship ID must be a valid positive number.");
       setScannerSelectedContactId("");
       setScannerLiveContacts([]);
@@ -3253,6 +3301,7 @@ export default function Home() {
         setScannerSystemId(null);
         setScannerSystemName(null);
         setScannerGenerationVersion(null);
+        setScannerSnapshotVersion(null);
         setScannerContactsError(message);
         setScannerLiveContacts([]);
         setLocalChartData(null);
@@ -3263,7 +3312,7 @@ export default function Home() {
         return;
       }
 
-      const payload = data as ScannerContactsResponse;
+      const payload = normalizeScannerContactsPayload(data as ScannerContactsResponse);
       const contacts = Array.isArray(payload.contacts) ? payload.contacts : [];
       setScannerContacts(contacts);
       if (!options?.silent) {
@@ -3277,6 +3326,21 @@ export default function Home() {
       setScannerGenerationVersion(
         Number.isInteger(payload.generation_version) ? payload.generation_version : null,
       );
+      setScannerSnapshotVersion(payload.snapshot_version ?? null);
+      if (
+        localChartData
+        && !areSnapshotVersionsCompatible(
+          payload.snapshot_version,
+          buildLocalSpaceSnapshotVersion(
+            localChartData.system.id,
+            localChartData.system.generation_version,
+            localChartData.snapshot_version,
+          ),
+        )
+      ) {
+        setLocalChartData(null);
+        setLocalChartError(LOCAL_CHART_SNAPSHOT_MISMATCH_MESSAGE);
+      }
       setScannerSelectedContactId((current) => {
         if (
           current
@@ -3302,6 +3366,7 @@ export default function Home() {
       setScannerSystemId(null);
       setScannerSystemName(null);
       setScannerGenerationVersion(null);
+      setScannerSnapshotVersion(null);
       setScannerContactsError(message);
       setScannerLiveContacts([]);
       setLocalChartData(null);
@@ -3356,6 +3421,22 @@ export default function Home() {
       }
 
       const chartPayload = normalizeLocalChartPayload(data as LocalChartResponse);
+      if (!areSnapshotVersionsCompatible(scannerSnapshotVersion, chartPayload.snapshot_version)) {
+        const message = LOCAL_CHART_SNAPSHOT_MISMATCH_MESSAGE;
+        setLocalChartData(null);
+        setLocalChartError(message);
+        emitSystemChartObservability("chart-sync", {
+          systemId,
+          success: false,
+          reason: "snapshot-mismatch",
+          rowCount: 0,
+        });
+        if (!options?.silent) {
+          showToast({ message, variant: "warning" });
+        }
+        return;
+      }
+
       setLocalChartData(chartPayload);
       dispatchFlightAudioEvent("chart.sync_success", {
         system_id: systemId,
@@ -3383,7 +3464,13 @@ export default function Home() {
     } finally {
       setLocalChartLoading(false);
     }
-  }, [dispatchFlightAudioEvent, emitSystemChartObservability, showToast, token]);
+  }, [
+    dispatchFlightAudioEvent,
+    emitSystemChartObservability,
+    scannerSnapshotVersion,
+    showToast,
+    token,
+  ]);
 
   const fetchGalaxySystems = useCallback(async (options?: { silent?: boolean }) => {
     if (!token) {
@@ -3609,11 +3696,12 @@ export default function Home() {
   }, [flightJumpPhase]);
 
   const dispatchCollisionAudioEvents = useCallback((payload: CollisionCheckResponse) => {
+    const recoveryEventKeys: FlightAudioEventName[] = payload.recovered
+      ? ["ops.crash_recovery_start", "ops.crash_recovery_complete"]
+      : [];
     const defaultEventKeys: FlightAudioEventName[] = [
       payload.severity === "critical" ? "collision.critical_hit" : "collision.glancing_hit",
-      ...(payload.recovered
-        ? ["ops.crash_recovery_start", "ops.crash_recovery_complete"]
-        : []),
+      ...recoveryEventKeys,
     ];
 
     const parsedEventKeys = Array.isArray(payload.sfx_event_keys)
@@ -4454,92 +4542,102 @@ export default function Home() {
     ];
   }, [inventory]);
 
+  const liveStationAnchoredShipPosition = useMemo(() => {
+    if (!localChartData?.stations?.length) {
+      return null;
+    }
+
+    const scannerContactById = new Map(
+      scannerContacts.map((contact) => [contact.id, contact]),
+    );
+    const stationById = new Map(
+      localChartData.stations.map((station) => [station.id, station]),
+    );
+
+    const preferredStationContactIds: string[] = [];
+    if (flightDockingApproachTargetContactId?.startsWith("station-")) {
+      preferredStationContactIds.push(flightDockingApproachTargetContactId);
+    }
+    if (scannerSelectedContactId?.startsWith("station-")) {
+      preferredStationContactIds.push(scannerSelectedContactId);
+    }
+    if (jumpTargetStationId && Number.isInteger(jumpTargetStationId) && jumpTargetStationId > 0) {
+      preferredStationContactIds.push(`station-${jumpTargetStationId}`);
+    }
+
+    const liveStationContactById = new Map(
+      scannerLiveContacts.map((liveContact) => [liveContact.id, liveContact]),
+    );
+
+    const resolveAnchoredPosition = (liveContact: ScannerLiveContact | undefined): {
+      x: number;
+      y: number;
+      z: number;
+    } | null => {
+      if (!liveContact) {
+        return null;
+      }
+
+      const scannerContact = scannerContactById.get(liveContact.id);
+      if (!scannerContact || scannerContact.contact_type !== "station") {
+        return null;
+      }
+
+      const stationId = parseStationContactId(scannerContact.id);
+      if (!stationId) {
+        return null;
+      }
+
+      const station = stationById.get(stationId);
+      if (!station) {
+        return null;
+      }
+
+      const relativePosition = resolveRelativeKmVector(liveContact, scannerContact);
+      if (!relativePosition) {
+        return null;
+      }
+
+      return {
+        x: station.position_x - relativePosition.x,
+        y: station.position_y - relativePosition.y,
+        z: station.position_z - relativePosition.z,
+      };
+    };
+
+    for (const preferredContactId of preferredStationContactIds) {
+      const anchoredPosition = resolveAnchoredPosition(
+        liveStationContactById.get(preferredContactId),
+      );
+      if (anchoredPosition) {
+        return anchoredPosition;
+      }
+    }
+
+    const nearestLiveStationContact = scannerLiveContacts
+      .filter((liveContact) => {
+        const scannerContact = scannerContactById.get(liveContact.id);
+        return scannerContact?.contact_type === "station";
+      })
+      .sort((left, right) => left.distance - right.distance)[0];
+
+    return resolveAnchoredPosition(nearestLiveStationContact);
+  }, [
+    flightDockingApproachTargetContactId,
+    jumpTargetStationId,
+    localChartData?.stations,
+    scannerContacts,
+    scannerLiveContacts,
+    scannerSelectedContactId,
+  ]);
+
   const localChartRows = useMemo<(LocalChartRow | null)[]>(() => {
     const minimumRows = 8;
     const scannerLiveContactById = new Map(
       scannerLiveContacts.map((liveContact) => [liveContact.id, liveContact]),
     );
     const scannerContactById = new Map(scannerContacts.map((contact) => [contact.id, contact]));
-    const anchoredShipWorldPosition = (() => {
-      if (!localChartData?.stations?.length) {
-        return null;
-      }
-
-      const stationById = new Map(
-        localChartData.stations.map((station) => [station.id, station]),
-      );
-      const preferredStationContactIds: string[] = [];
-      if (flightDockingApproachTargetContactId?.startsWith("station-")) {
-        preferredStationContactIds.push(flightDockingApproachTargetContactId);
-      }
-      if (scannerSelectedContactId?.startsWith("station-")) {
-        preferredStationContactIds.push(scannerSelectedContactId);
-      }
-      if (jumpTargetStationId && Number.isInteger(jumpTargetStationId) && jumpTargetStationId > 0) {
-        preferredStationContactIds.push(`station-${jumpTargetStationId}`);
-      }
-
-      const resolveAnchoredPosition = (liveContact: ScannerLiveContact | undefined): {
-        x: number;
-        y: number;
-        z: number;
-      } | null => {
-        if (!liveContact) {
-          return null;
-        }
-
-        const scannerContact = scannerContactById.get(liveContact.id);
-        if (!scannerContact || scannerContact.contact_type !== "station") {
-          return null;
-        }
-
-        const stationId = parseStationContactId(scannerContact.id);
-        if (!stationId) {
-          return null;
-        }
-
-        const station = stationById.get(stationId);
-        if (!station) {
-          return null;
-        }
-
-        return {
-          x: station.position_x - (
-            Number.isFinite(liveContact.relative_x_km)
-              ? Number(liveContact.relative_x_km)
-              : liveContact.relative_x * STATION_SCENE_TO_WORLD_SCALE_XZ
-          ),
-          y: station.position_y - (
-            Number.isFinite(liveContact.relative_y_km)
-              ? Number(liveContact.relative_y_km)
-              : liveContact.relative_y * STATION_SCENE_TO_WORLD_SCALE_Y
-          ),
-          z: station.position_z - (
-            Number.isFinite(liveContact.relative_z_km)
-              ? Number(liveContact.relative_z_km)
-              : liveContact.relative_z * STATION_SCENE_TO_WORLD_SCALE_XZ
-          ),
-        };
-      };
-
-      for (const preferredContactId of preferredStationContactIds) {
-        const anchoredPosition = resolveAnchoredPosition(
-          scannerLiveContactById.get(preferredContactId),
-        );
-        if (anchoredPosition) {
-          return anchoredPosition;
-        }
-      }
-
-      const nearestLiveStationContact = scannerLiveContacts
-        .filter((liveContact) => {
-          const scannerContact = scannerContactById.get(liveContact.id);
-          return scannerContact?.contact_type === "station";
-        })
-        .sort((left, right) => left.distance - right.distance)[0];
-
-      return resolveAnchoredPosition(nearestLiveStationContact);
-    })();
+    const anchoredShipWorldPosition = liveStationAnchoredShipPosition;
     const scannerContactWorldPositionById = (() => {
       const map = new Map<string, { x: number; y: number; z: number }>();
       if (!anchoredShipWorldPosition) {
@@ -4548,34 +4646,15 @@ export default function Home() {
 
       scannerContacts.forEach((contact) => {
         const liveContact = scannerLiveContactById.get(contact.id);
-        const relativeXKm = Number.isFinite(liveContact?.relative_x_km)
-          ? Number(liveContact?.relative_x_km)
-          : Number.isFinite(contact.relative_x_km)
-            ? Number(contact.relative_x_km)
-            : null;
-        const relativeYKm = Number.isFinite(liveContact?.relative_y_km)
-          ? Number(liveContact?.relative_y_km)
-          : Number.isFinite(contact.relative_y_km)
-            ? Number(contact.relative_y_km)
-            : null;
-        const relativeZKm = Number.isFinite(liveContact?.relative_z_km)
-          ? Number(liveContact?.relative_z_km)
-          : Number.isFinite(contact.relative_z_km)
-            ? Number(contact.relative_z_km)
-            : null;
-
-        if (
-          relativeXKm === null
-          || relativeYKm === null
-          || relativeZKm === null
-        ) {
+        const relativePosition = resolveRelativeKmVector(liveContact, contact);
+        if (!relativePosition) {
           return;
         }
 
         map.set(contact.id, {
-          x: anchoredShipWorldPosition.x + relativeXKm,
-          y: anchoredShipWorldPosition.y + relativeYKm,
-          z: anchoredShipWorldPosition.z + relativeZKm,
+          x: anchoredShipWorldPosition.x + relativePosition.x,
+          y: anchoredShipWorldPosition.y + relativePosition.y,
+          z: anchoredShipWorldPosition.z + relativePosition.z,
         });
       });
 
@@ -4588,31 +4667,12 @@ export default function Home() {
       z: number;
     } => {
       const liveContact = scannerLiveContactById.get(contact.id);
-      const relativeXKm = Number.isFinite(liveContact?.relative_x_km)
-        ? Number(liveContact?.relative_x_km)
-        : Number.isFinite(contact.relative_x_km)
-          ? Number(contact.relative_x_km)
-          : null;
-      const relativeYKm = Number.isFinite(liveContact?.relative_y_km)
-        ? Number(liveContact?.relative_y_km)
-        : Number.isFinite(contact.relative_y_km)
-          ? Number(contact.relative_y_km)
-          : null;
-      const relativeZKm = Number.isFinite(liveContact?.relative_z_km)
-        ? Number(liveContact?.relative_z_km)
-        : Number.isFinite(contact.relative_z_km)
-          ? Number(contact.relative_z_km)
-          : null;
-
-      if (
-        relativeXKm !== null
-        && relativeYKm !== null
-        && relativeZKm !== null
-      ) {
+      const relativePosition = resolveRelativeKmVector(liveContact, contact);
+      if (relativePosition) {
         return {
-          x: relativeXKm,
-          y: relativeYKm,
-          z: relativeZKm,
+          x: relativePosition.x,
+          y: relativePosition.y,
+          z: relativePosition.z,
         };
       }
 
@@ -4815,13 +4875,11 @@ export default function Home() {
       ...Array.from({ length: minimumRows - ordered.length }, () => null),
     ];
   }, [
-    flightDockingApproachTargetContactId,
-    jumpTargetStationId,
+    liveStationAnchoredShipPosition,
     localChartData,
     localChartLayers,
     scannerContacts,
     scannerLiveContacts,
-    scannerSelectedContactId,
   ]);
 
   const localChartDisplayResult = useMemo<{
@@ -4987,20 +5045,35 @@ export default function Home() {
     [localChartRows, scannerSelectedContactId],
   );
 
+  const selectedSystemChartLiveContact = useMemo(
+    () => (scannerSelectedContactId ? scannerLiveContactMap.get(scannerSelectedContactId) ?? null : null),
+    [scannerLiveContactMap, scannerSelectedContactId],
+  );
+
   const visibleSystemChartStationContacts = useMemo(
     () => visibleLocalChartContacts.filter((contact) => contact.contact_type === "station"),
     [visibleLocalChartContacts],
   );
 
   const selectedSystemChartDistanceLabel = useMemo(() => {
-    const baseDistanceKm = selectedSystemChartContact?.distance_km;
-    if (baseDistanceKm === null || baseDistanceKm === undefined) {
+    if (!selectedSystemChartContact) {
       return "Range unavailable";
     }
 
-    const isCelestialContact = selectedSystemChartContact?.contact_type === "planet"
-      || selectedSystemChartContact?.contact_type === "moon"
-      || selectedSystemChartContact?.contact_type === "star";
+    const hasSnapshotDistance = Number.isFinite(selectedSystemChartContact.distance_km);
+    const hasLiveDistance = Number.isFinite(selectedSystemChartLiveContact?.distance);
+    if (!hasSnapshotDistance && !hasLiveDistance) {
+      return "Range unavailable";
+    }
+
+    const baseDistanceKm = resolveScannerDisplayDistanceKm(
+      hasSnapshotDistance ? Number(selectedSystemChartContact.distance_km) : 0,
+      selectedSystemChartLiveContact?.distance,
+    );
+
+    const isCelestialContact = selectedSystemChartContact.contact_type === "planet"
+      || selectedSystemChartContact.contact_type === "moon"
+      || selectedSystemChartContact.contact_type === "star";
     const distanceKm = isCelestialContact
       ? baseDistanceKm * CELESTIAL_DISTANCE_REALISM_MULTIPLIER
       : baseDistanceKm;
@@ -5009,21 +5082,30 @@ export default function Home() {
       minimumFractionDigits: 1,
       maximumFractionDigits: 1,
     })} km`;
-  }, [selectedSystemChartContact]);
+  }, [selectedSystemChartContact, selectedSystemChartLiveContact]);
 
   const selectedSystemChartDistanceKm = useMemo(() => {
-    const isCelestialContact = selectedSystemChartContact?.contact_type === "planet"
-      || selectedSystemChartContact?.contact_type === "moon"
-      || selectedSystemChartContact?.contact_type === "star";
-
-    if (selectedSystemChartContact?.distance_km === null || selectedSystemChartContact?.distance_km === undefined) {
+    if (!selectedSystemChartContact) {
       return null;
     }
-    const distanceKm = Math.max(0, selectedSystemChartContact.distance_km);
+
+    const hasSnapshotDistance = Number.isFinite(selectedSystemChartContact.distance_km);
+    const hasLiveDistance = Number.isFinite(selectedSystemChartLiveContact?.distance);
+    if (!hasSnapshotDistance && !hasLiveDistance) {
+      return null;
+    }
+
+    const isCelestialContact = selectedSystemChartContact.contact_type === "planet"
+      || selectedSystemChartContact.contact_type === "moon"
+      || selectedSystemChartContact.contact_type === "star";
+    const distanceKm = resolveScannerDisplayDistanceKm(
+      hasSnapshotDistance ? Number(selectedSystemChartContact.distance_km) : 0,
+      selectedSystemChartLiveContact?.distance,
+    );
     return isCelestialContact
       ? distanceKm * CELESTIAL_DISTANCE_REALISM_MULTIPLIER
       : distanceKm;
-  }, [selectedSystemChartContact]);
+  }, [selectedSystemChartContact, selectedSystemChartLiveContact]);
 
   const selectedSystemChartContactType = selectedSystemChartContact?.contact_type ?? null;
   const selectedSystemChartSupportsWaypoint =
@@ -6756,110 +6838,6 @@ export default function Home() {
     flightLocalWaypointContactId,
   ]);
 
-  const scannerLiveContactMap = useMemo(() => {
-    const map = new Map<string, ScannerLiveContact>();
-    scannerLiveContacts.forEach((contact) => {
-      map.set(contact.id, contact);
-    });
-    return map;
-  }, [scannerLiveContacts]);
-
-  const liveStationAnchoredShipPosition = useMemo(() => {
-    if (!localChartData?.stations?.length) {
-      return null;
-    }
-
-    const scannerContactById = new Map(
-      scannerContacts.map((contact) => [contact.id, contact]),
-    );
-    const stationById = new Map(
-      localChartData.stations.map((station) => [station.id, station]),
-    );
-
-    const preferredStationContactIds: string[] = [];
-    if (flightDockingApproachTargetContactId?.startsWith("station-")) {
-      preferredStationContactIds.push(flightDockingApproachTargetContactId);
-    }
-    if (scannerSelectedContactId?.startsWith("station-")) {
-      preferredStationContactIds.push(scannerSelectedContactId);
-    }
-    if (jumpTargetStationId && Number.isInteger(jumpTargetStationId) && jumpTargetStationId > 0) {
-      preferredStationContactIds.push(`station-${jumpTargetStationId}`);
-    }
-
-    const liveStationContactById = new Map(
-      scannerLiveContacts.map((liveContact) => [liveContact.id, liveContact]),
-    );
-
-    const resolveAnchoredPosition = (liveContact: ScannerLiveContact | undefined): {
-      x: number;
-      y: number;
-      z: number;
-    } | null => {
-      if (!liveContact) {
-        return null;
-      }
-
-      const scannerContact = scannerContactById.get(liveContact.id);
-      if (!scannerContact || scannerContact.contact_type !== "station") {
-        return null;
-      }
-
-      const stationId = parseStationContactId(scannerContact.id);
-      if (!stationId) {
-        return null;
-      }
-
-      const station = stationById.get(stationId);
-      if (!station) {
-        return null;
-      }
-
-      return {
-        x: station.position_x - (
-          Number.isFinite(liveContact.relative_x_km)
-            ? Number(liveContact.relative_x_km)
-            : liveContact.relative_x * STATION_SCENE_TO_WORLD_SCALE_XZ
-        ),
-        y: station.position_y - (
-          Number.isFinite(liveContact.relative_y_km)
-            ? Number(liveContact.relative_y_km)
-            : liveContact.relative_y * STATION_SCENE_TO_WORLD_SCALE_Y
-        ),
-        z: station.position_z - (
-          Number.isFinite(liveContact.relative_z_km)
-            ? Number(liveContact.relative_z_km)
-            : liveContact.relative_z * STATION_SCENE_TO_WORLD_SCALE_XZ
-        ),
-      };
-    };
-
-    for (const preferredContactId of preferredStationContactIds) {
-      const anchoredPosition = resolveAnchoredPosition(
-        liveStationContactById.get(preferredContactId),
-      );
-      if (anchoredPosition) {
-        return anchoredPosition;
-      }
-    }
-
-    const nearestLiveStationContact = scannerLiveContacts
-      .filter((liveContact) => {
-        const scannerContact = scannerContactById.get(liveContact.id);
-        return scannerContact?.contact_type === "station";
-      })
-      .sort((left, right) => left.distance - right.distance)[0];
-
-    return resolveAnchoredPosition(nearestLiveStationContact);
-  }, [
-    flightDockingApproachTargetContactId,
-    jumpTargetStationId,
-    localChartData?.stations,
-    scannerContacts,
-    scannerLiveContacts,
-    scannerSelectedContactId,
-  ]);
-
   const activeDockTargetLiveContact = useMemo(() => {
     if (!activeDockTargetContact) {
       return null;
@@ -7162,7 +7140,11 @@ export default function Home() {
         .slice(0, 10)
         .map((contact) => ({
           id: contact.id,
-          contact_type: contact.contact_type,
+          contact_type: contact.contact_type === "star"
+            ? "star"
+            : contact.contact_type === "moon"
+              ? "moon"
+              : "planet",
           name: contact.name,
           distance_km: contact.distance_km,
           orbiting_planet_name: contact.orbiting_planet_name ?? null,
@@ -8924,7 +8906,7 @@ export default function Home() {
     }
 
     void fetchLocalChart(scannerSystemId, { silent: true });
-  }, [fetchLocalChart, scannerSystemId, token]);
+  }, [fetchLocalChart, scannerSnapshotVersion, scannerSystemId, token]);
 
   useEffect(() => {
     if (!token) {
@@ -9522,6 +9504,17 @@ export default function Home() {
     setFlightRecentImpacts([]);
     collisionToastSignatureRef.current = "";
   }, [dispatchFlightAudioEvent, dockedAtStation, shipTelemetry?.docked_station_id]);
+
+  useEffect(() => {
+    if (
+      flightJumpPhase !== FLIGHT_PHASE.CHARGING
+      && flightJumpPhase !== FLIGHT_PHASE.JUMPING
+      && flightJumpPhase !== FLIGHT_PHASE.ARRIVED
+    ) {
+      return;
+    }
+    setScannerLiveContacts([]);
+  }, [flightJumpPhase]);
 
   useEffect(() => {
     if (!isDockingApproachActive && !isFlightTransitActive) {
@@ -12166,6 +12159,7 @@ export default function Home() {
                             transitStationLabel={flightTransitStationLabel}
                             showContactLabels={showFlightContactLabels}
                             focusedContact={selectedScannerContact}
+                            scannerRangeKm={scannerRangeKm}
                             scannerContacts={scannerContacts}
                             celestialAnchors={scannerCelestialAnchors}
                             onSpeedChange={setFlightSpeedUnits}

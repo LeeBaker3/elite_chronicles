@@ -10,8 +10,13 @@ import {
     advanceManualPitch,
     desiredDockingPitchFromDirection,
     desiredDockingYawFromDirection,
+    projectCameraSpaceSphereToNdc,
     normalizeSignedAngle,
     projectCameraSpacePointToNdc,
+    resolveCelestialRenderRadius,
+    resolveContactDistanceKm,
+    resolveProjectedSphereLabelAnchorNdc,
+    resolveScannerReferenceVector,
 } from "./FlightScene.math";
 import {
     calculateDockingCameraPresentationBlend,
@@ -85,6 +90,7 @@ type FlightSceneProps = {
     stationShapeKey?: string | null;
     transitStationLabel?: string | null;
     focusedContact: ScannerAnchorContact | null;
+    scannerRangeKm?: number;
     scannerContacts: ScannerAnchorContact[];
     celestialAnchors: CelestialPresentationAnchor[];
     onSpeedChange?: (speed: number) => void;
@@ -174,6 +180,8 @@ type ScannerTelemetryContact = {
     vertical_fov_degrees: number;
     distance: number;
     distance_mode: "surface" | "port";
+    label_fov_x?: number;
+    label_fov_y?: number;
 };
 
 type InputState = {
@@ -301,35 +309,12 @@ function resolveCelestialAnchorColor(contact: CelestialPresentationAnchor): stri
 }
 
 function resolveCelestialAnchorSize(contact: CelestialPresentationAnchor): number {
-    const radiusKm = Number(contact.radius_km);
-    const bodyKind = contact.body_kind;
-    const bodyType = (contact.body_type || "").trim().toLowerCase();
-
-    if (Number.isFinite(radiusKm) && radiusKm > 0) {
-        const normalized = Math.log10(Math.max(1, radiusKm));
-        const scaled = 3.1 + ((normalized - 2) * 1.72);
-        if (bodyKind === "star") {
-            if (bodyType === "m-class") {
-                return clamp(scaled, 10.5, 18.5);
-            }
-            return clamp(scaled, 13.8, 24.5);
-        }
-        if (bodyKind === "moon") {
-            return clamp(scaled, 1.2, 3.2);
-        }
-        if (bodyType === "gas-giant") {
-            return clamp(scaled, 8.5, 16.8);
-        }
-        return clamp(scaled, 3.6, 8.2);
-    }
-
-    if (contact.contact_type === "star") {
-        return 14;
-    }
-    if (contact.contact_type === "planet") {
-        return 4.5;
-    }
-    return anchorSize(contact.contact_type);
+    return resolveCelestialRenderRadius({
+        bodyKind: contact.body_kind,
+        bodyType: contact.body_type,
+        radiusKm: contact.radius_km,
+        distanceKm: contact.distance_km,
+    });
 }
 
 function resolveCelestialLodTier(contact: CelestialPresentationAnchor): "near" | "mid" | "far" {
@@ -417,22 +402,6 @@ function shouldRenderPlanetRing(contact: CelestialPresentationAnchor): boolean {
         return true;
     }
     return contactHashUnit(contact) > 0.9;
-}
-
-function anchorSize(contactType: ScannerAnchorContact["contact_type"]): number {
-    if (contactType === "star") {
-        return 1.5;
-    }
-    if (contactType === "planet") {
-        return 0.9;
-    }
-    if (contactType === "moon") {
-        return 0.7;
-    }
-    if (contactType === "station") {
-        return 0.44;
-    }
-    return 0.32;
 }
 
 function contactHasPhysicalLocalCoordinates(contact: ScannerAnchorContact): boolean {
@@ -1622,6 +1591,7 @@ function FlightSceneContent({
     cameraMode = "boresight",
     shipVisualKey,
     focusedContact,
+    scannerRangeKm = 25,
     scannerContacts,
     celestialAnchors,
     onSpeedChange,
@@ -1644,6 +1614,7 @@ function FlightSceneContent({
     cameraMode?: FlightCameraMode;
     shipVisualKey?: string | null;
     focusedContact: ScannerAnchorContact | null;
+    scannerRangeKm?: number;
     scannerContacts: ScannerAnchorContact[];
     celestialAnchors: CelestialPresentationAnchor[];
     onSpeedChange?: (speed: number) => void;
@@ -1710,12 +1681,14 @@ function FlightSceneContent({
             : new Vector3(0, 0, 0),
     );
     const scannerRelativeVectorRef = useRef(new Vector3());
+    const scannerPlaneVectorRef = useRef(new Vector3());
     const scannerCameraRelativeVectorRef = useRef(new Vector3());
     const scannerInverseQuaternionRef = useRef(new Quaternion());
     const lastScannerTelemetrySentAtRef = useRef(0);
     const lastContactLabelSignatureRef = useRef("");
     const lastCollisionAtRef = useRef(0);
     const activeCollisionContactIdRef = useRef<string | null>(null);
+    const lastJumpPhaseRef = useRef(jumpPhase);
     const dockingApproachInitialDistanceRef = useRef<number | null>(null);
     const dockingApproachCompleteSentRef = useRef(false);
     const dockingApproachLastProgressRef = useRef(-1);
@@ -1758,8 +1731,8 @@ function FlightSceneContent({
     const dockingCameraTargetFovRef = useRef(62);
     const dockingCameraTargetNearRef = useRef(0.1);
 
-    const SCANNER_PLANE_RANGE = 110;
-    const SCANNER_ALTITUDE_RANGE = 48;
+    const SCANNER_PLANE_RANGE = Math.max(1, scannerRangeKm);
+    const SCANNER_ALTITUDE_RANGE = Math.max(10, SCANNER_PLANE_RANGE * 0.44);
     const DOCKING_PORT_THRESHOLD = 0.28;
     const DOCKING_PORT_FALLBACK_THRESHOLD = 0.48;
     const DOCKING_PORT_MIN_STANDOFF_KM = 0.02;
@@ -2128,6 +2101,21 @@ function FlightSceneContent({
         scannerContacts,
         spawnDirective,
     ]);
+
+    useEffect(() => {
+        const ship = shipRef.current;
+        const previousJumpPhase = lastJumpPhaseRef.current;
+        lastJumpPhaseRef.current = jumpPhase;
+
+        if (!ship || jumpPhase !== "arrived" || previousJumpPhase === "arrived") {
+            return;
+        }
+
+        ship.position.set(0, 0, 0);
+        worldVelocityRef.current.set(0, 0, 0);
+        velocityRef.current = 0;
+        lastReportedSpeedRef.current = Number.NaN;
+    }, [jumpPhase]);
 
     const waypointPosition = useMemo<[number, number, number] | null>(() => {
         if (waypointTargetContact) {
@@ -3486,29 +3474,18 @@ function FlightSceneContent({
                     .invert();
 
                 const telemetryContacts = scannerContacts.map((contact) => {
-                    const relativeFromShip = scannerRelativeVectorRef.current
+                    const relativeFromShipWorld = scannerRelativeVectorRef.current
                         .copy(resolveContactRenderPosition(contact, scannerRelativeVectorRef.current))
-                        .sub(ship.position)
-                        .applyQuaternion(inverseOrientation);
-
-                    const relativeX = relativeFromShip.x;
-                    const relativeY = relativeFromShip.y;
-                    const relativeZ = relativeFromShip.z;
-                    const centerDistance = Math.hypot(relativeX, relativeY, relativeZ);
-                    const stationSurfaceDistance = contact.contact_type === "station"
-                        ? Math.max(0, centerDistance - resolveStationCollisionRadiusKm(contact))
-                        : centerDistance;
+                        .sub(ship.position);
+                    const centerDistance = relativeFromShipWorld.length();
                     const isDockingPortDistanceContact = (
                         dockingApproachRequested
                         && contact.contact_type === "station"
                         && contact.id === dockingApproachContactId
                     );
-                    const distanceMode: ScannerTelemetryContact["distance_mode"] = isDockingPortDistanceContact
-                        ? "port"
-                        : "surface";
-                    const reportedDistance = (() => {
+                    const dockingPortDistance = (() => {
                         if (!isDockingPortDistanceContact) {
-                            return stationSurfaceDistance;
+                            return null;
                         }
                         const portWorldPosition = resolveDockingPortWorldPosition(
                             contact,
@@ -3521,10 +3498,35 @@ function FlightSceneContent({
                             portWorldPosition.z - ship.position.z,
                         );
                     })();
-                    const forwardDistance = -relativeZ;
-                    const planarX = clamp(relativeX / SCANNER_PLANE_RANGE, -1, 1);
+                    const distanceResolution = resolveContactDistanceKm({
+                        contactType: contact.contact_type,
+                        centerDistanceKm: centerDistance,
+                        radiusKm: contact.contact_type === "station"
+                            ? resolveStationCollisionRadiusKm(contact)
+                            : contact.radius_km,
+                        dockingPortDistanceKm: dockingPortDistance,
+                        useDockingPortDistance: isDockingPortDistanceContact,
+                    });
+                    const reportedDistance = distanceResolution.distanceKm;
+                    const distanceMode: ScannerTelemetryContact["distance_mode"] = distanceResolution.mode;
+                    const scannerReferenceVector = resolveScannerReferenceVector({
+                        contactType: contact.contact_type,
+                        centerX: relativeFromShipWorld.x,
+                        centerY: relativeFromShipWorld.y,
+                        centerZ: relativeFromShipWorld.z,
+                        displayedDistanceKm: reportedDistance,
+                    });
+                    const scannerReferenceLocal = scannerPlaneVectorRef.current
+                        .set(
+                            scannerReferenceVector.x,
+                            scannerReferenceVector.y,
+                            scannerReferenceVector.z,
+                        )
+                        .applyQuaternion(inverseOrientation);
+                    const forwardDistance = -scannerReferenceLocal.z;
+                    const planarX = clamp(scannerReferenceLocal.x / SCANNER_PLANE_RANGE, -1, 1);
                     const planarY = clamp(forwardDistance / SCANNER_PLANE_RANGE, -1, 1);
-                    const altitude = clamp(relativeY / SCANNER_ALTITUDE_RANGE, -1, 1);
+                    const altitude = clamp(scannerReferenceLocal.y / SCANNER_ALTITUDE_RANGE, -1, 1);
 
                     const relativeFromCamera = scannerCameraRelativeVectorRef.current
                         .copy(resolveContactRenderPosition(contact, scannerCameraRelativeVectorRef.current))
@@ -3544,43 +3546,82 @@ function FlightSceneContent({
                         ? (relativeFromCamera.y / cameraForwardDistance) / tanVerticalHalfFov
                         : Number.POSITIVE_INFINITY;
 
-                    const inView = (
-                        cameraForwardDistance > 0
-                        && (() => {
-                            const inViewMarginByType: Record<ScannerAnchorContact["contact_type"], number> = {
-                                ship: 0.5,
-                                station: 1.05,
-                                planet: 1.2,
-                                moon: 1.15,
-                                star: 1.35,
-                            };
-                            const margin = inViewMarginByType[contact.contact_type] ?? 0;
-                            return (
-                                Math.abs(fovX) <= (1 + margin)
-                                && Math.abs(fovY) <= (1 + margin)
-                            );
-                        })()
-                    );
+                    const inViewMarginByType: Record<ScannerAnchorContact["contact_type"], number> = {
+                        ship: 0.5,
+                        station: 1.05,
+                        planet: 1.2,
+                        moon: 1.15,
+                        star: 1.35,
+                    };
+                    const inViewMargin = inViewMarginByType[contact.contact_type] ?? 0;
+                    const projectedContactRadius = (() => {
+                        if (contact.contact_type === "station") {
+                            return resolveStationCollisionRadiusKm(contact);
+                        }
+                        if (
+                            contact.contact_type === "planet"
+                            || contact.contact_type === "moon"
+                            || contact.contact_type === "star"
+                        ) {
+                            return resolveCelestialRenderRadius({
+                                bodyKind: contact.contact_type === "star"
+                                    ? "star"
+                                    : contact.contact_type === "moon"
+                                        ? "moon"
+                                        : "planet",
+                                bodyType: contact.body_type,
+                                radiusKm: contact.radius_km,
+                                distanceKm: reportedDistance,
+                            });
+                        }
+                        return 0;
+                    })();
+                    const projectedContact = projectCameraSpaceSphereToNdc({
+                        cameraSpaceX: relativeFromCamera.x,
+                        cameraSpaceY: relativeFromCamera.y,
+                        cameraSpaceZ: relativeFromCamera.z,
+                        radius: projectedContactRadius,
+                        verticalFovDegrees: camera.fov,
+                        aspectRatio: camera.aspect,
+                        marginX: inViewMargin,
+                        marginY: inViewMargin,
+                    });
+                    const inView = projectedContact.sphereInView;
+                    const labelAnchor = (
+                        contact.contact_type === "planet"
+                        || contact.contact_type === "moon"
+                        || contact.contact_type === "star"
+                    )
+                        ? resolveProjectedSphereLabelAnchorNdc({
+                            projectedSphere: projectedContact,
+                            targetNdcX: 0,
+                            targetNdcY: 0,
+                        })
+                        : {
+                            ndcX: fovX,
+                            ndcY: fovY,
+                            usesLimbAnchor: false,
+                        };
 
                     return {
                         id: contact.id,
-                        relative_x: relativeX,
-                        relative_y: relativeY,
-                        relative_z: relativeZ,
+                        relative_x: relativeFromShipWorld.x,
+                        relative_y: relativeFromShipWorld.y,
+                        relative_z: relativeFromShipWorld.z,
                         relative_x_km: (
                             contactUsesPhysicalNearFieldSpace(contact)
                         )
-                            ? relativeX / LOCAL_NEAR_FIELD_RENDER_UNITS_PER_KM
+                            ? relativeFromShipWorld.x / LOCAL_NEAR_FIELD_RENDER_UNITS_PER_KM
                             : undefined,
                         relative_y_km: (
                             contactUsesPhysicalNearFieldSpace(contact)
                         )
-                            ? relativeY / LOCAL_NEAR_FIELD_RENDER_UNITS_PER_KM
+                            ? relativeFromShipWorld.y / LOCAL_NEAR_FIELD_RENDER_UNITS_PER_KM
                             : undefined,
                         relative_z_km: (
                             contactUsesPhysicalNearFieldSpace(contact)
                         )
-                            ? relativeZ / LOCAL_NEAR_FIELD_RENDER_UNITS_PER_KM
+                            ? relativeFromShipWorld.z / LOCAL_NEAR_FIELD_RENDER_UNITS_PER_KM
                             : undefined,
                         forward_distance: forwardDistance,
                         plane_x: planarX,
@@ -3589,6 +3630,12 @@ function FlightSceneContent({
                         in_view: inView,
                         fov_x: Number.isFinite(fovX) ? fovX : 0,
                         fov_y: Number.isFinite(fovY) ? fovY : 0,
+                        label_fov_x: Number.isFinite(labelAnchor.ndcX)
+                            ? labelAnchor.ndcX
+                            : (Number.isFinite(fovX) ? fovX : 0),
+                        label_fov_y: Number.isFinite(labelAnchor.ndcY)
+                            ? labelAnchor.ndcY
+                            : (Number.isFinite(fovY) ? fovY : 0),
                         horizontal_fov_degrees: (horizontalHalfFovRadians * 2 * 180) / Math.PI,
                         vertical_fov_degrees: camera.fov,
                         distance: reportedDistance,
@@ -3606,7 +3653,11 @@ function FlightSceneContent({
                         scannerContacts.map((contact) => [contact.id, contact]),
                     );
                     const selectedContactId = focusedContact?.id ?? null;
-                    const labelAnchors = telemetryContacts
+                    const priorityLabelIds = Array.from(new Set(
+                        [selectedContactId, waypointTargetId]
+                            .filter((value): value is string => Boolean(value)),
+                    ));
+                    const labelAnchorCandidates = telemetryContacts
                         .filter((telemetry) => telemetry.in_view)
                         .map((telemetry) => {
                             const contact = contactById.get(telemetry.id);
@@ -3614,8 +3665,10 @@ function FlightSceneContent({
                                 return null;
                             }
 
-                            const rawLeftPercent = 50 + (telemetry.fov_x * 50);
-                            const rawTopPercent = 50 - (telemetry.fov_y * 50);
+                            const labelFovX = telemetry.label_fov_x ?? telemetry.fov_x;
+                            const labelFovY = telemetry.label_fov_y ?? telemetry.fov_y;
+                            const rawLeftPercent = 50 + (labelFovX * 50);
+                            const rawTopPercent = 50 - (labelFovY * 50);
 
                             return {
                                 id: contact.id,
@@ -3635,7 +3688,6 @@ function FlightSceneContent({
                             distance: number;
                         } => Boolean(anchor))
                         .sort((left, right) => left.distance - right.distance)
-                        .slice(0, 12)
                         .map((anchor) => ({
                             id: anchor.id,
                             name: anchor.name,
@@ -3643,6 +3695,18 @@ function FlightSceneContent({
                             topPercent: anchor.topPercent,
                             isSelected: anchor.isSelected,
                         }));
+                    const prioritizedLabelAnchors = priorityLabelIds
+                        .map((contactId) => (
+                            labelAnchorCandidates.find((anchor) => anchor.id === contactId) ?? null
+                        ))
+                        .filter((anchor): anchor is FlightSceneContactLabel => Boolean(anchor));
+                    const supplementalLabelAnchors = labelAnchorCandidates.filter(
+                        (anchor) => !priorityLabelIds.includes(anchor.id),
+                    );
+                    const labelAnchors = [
+                        ...prioritizedLabelAnchors,
+                        ...supplementalLabelAnchors,
+                    ].slice(0, 12);
 
                     const signature = labelAnchors
                         .map((anchor) => (
@@ -3804,6 +3868,7 @@ function FlightSceneContent({
                                 emissiveIntensity={contact.body_kind === "star" ? 0.95 : 0.18}
                                 roughness={contact.body_kind === "star" ? 0.56 : 0.88}
                                 metalness={contact.body_kind === "star" ? 0.02 : 0.08}
+                                side={DoubleSide}
                             />
                         </mesh>
                         {resolveCloudLayer(contact) ? (
@@ -3821,6 +3886,7 @@ function FlightSceneContent({
                                     opacity={resolveCloudLayer(contact)?.opacity}
                                     roughness={1}
                                     metalness={0}
+                                    side={DoubleSide}
                                 />
                             </mesh>
                         ) : null}
@@ -3860,6 +3926,7 @@ function FlightSceneContent({
                                     color={resolveCelestialAnchorColor(contact)}
                                     transparent
                                     opacity={0.18}
+                                    side={DoubleSide}
                                 />
                             </mesh>
                         ) : null}
@@ -3880,6 +3947,7 @@ export function FlightScene(props: FlightSceneProps): ReactElement {
         stationShapeKey,
         transitStationLabel,
         focusedContact,
+        scannerRangeKm = 25,
         scannerContacts,
         celestialAnchors,
         onSpeedChange,
@@ -3952,6 +4020,7 @@ export function FlightScene(props: FlightSceneProps): ReactElement {
                             cameraMode={cameraMode}
                             shipVisualKey={shipVisualKey}
                             focusedContact={focusedContact}
+                            scannerRangeKm={scannerRangeKm}
                             scannerContacts={scannerContacts}
                             celestialAnchors={celestialAnchors}
                             onSpeedChange={onSpeedChange}

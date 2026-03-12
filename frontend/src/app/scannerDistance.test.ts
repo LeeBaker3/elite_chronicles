@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 import { resolveScannerDisplayDistanceKm } from "./scannerDistance";
 
 describe("resolveScannerDisplayDistanceKm", () => {
-  it("prefers snapshot distance when it is available", () => {
-    expect(resolveScannerDisplayDistanceKm(42, 27)).toBe(42);
+  it("prefers live distance when it is available", () => {
+    expect(resolveScannerDisplayDistanceKm(42, 27)).toBe(27);
   });
 
   it("falls back to snapshot distance when live distance is missing", () => {

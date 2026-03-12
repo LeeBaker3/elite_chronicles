@@ -78,6 +78,12 @@ BASE_COLLISION_DAMAGE_BY_SEVERITY: dict[str, dict[str, tuple[int, int]]] = {
     },
 }
 
+
+def _local_space_snapshot_version(system_id: int, generation_version: int) -> str:
+    """Return a stable snapshot version for local-space contracts."""
+
+    return f"system-{int(system_id)}-gen-{int(generation_version)}"
+
 COLLISION_COOLDOWN_SECONDS = max(1, settings.flight_collision_cooldown_seconds)
 COLLISION_GLANCING_MULTIPLIER = max(
     settings.flight_collision_critical_multiplier,
@@ -680,6 +686,21 @@ def _distance_km_from_xyz(x: int, y: int, z: int) -> int:
     return int(math.sqrt((x * x) + (y * y) + (z * z)))
 
 
+def _surface_distance_km_from_xyz(
+    *,
+    x: int,
+    y: int,
+    z: int,
+    radius_km: int | None = None,
+) -> int:
+    """Return non-negative surface distance from origin for spherical bodies."""
+
+    center_distance_km = _distance_km_from_xyz(x, y, z)
+    if radius_km is None:
+        return center_distance_km
+    return max(0, center_distance_km - max(0, int(radius_km)))
+
+
 def _distance_between_points(
     *,
     source_x: int,
@@ -701,14 +722,15 @@ def _hyperspace_exit_exclusion_points(
     *,
     system: StarSystem,
     db: Session,
-) -> list[tuple[int, int, int]]:
-    """Return exclusion center points for hyperspace emergence validation."""
+) -> list[tuple[int, int, int, int]]:
+    """Return exclusion points and clearance radii for hyperspace emergence."""
 
-    points: list[tuple[int, int, int]] = [
+    points: list[tuple[int, int, int, int]] = [
         (
             int(system.position_x or 0),
             int(system.position_y or 0),
             int(system.position_z or 0),
+            0,
         )
     ]
 
@@ -726,6 +748,7 @@ def _hyperspace_exit_exclusion_points(
                 int(body.position_x or 0),
                 int(body.position_y or 0),
                 int(body.position_z or 0),
+                max(0, int(body.radius_km or 0)),
             )
         )
 
@@ -740,6 +763,7 @@ def _hyperspace_exit_exclusion_points(
                 int(station.position_x or 0),
                 int(station.position_y or 0),
                 int(station.position_z or 0),
+                0,
             )
         )
 
@@ -858,11 +882,11 @@ def _hyperspace_exit_is_safe(
     candidate_x: int,
     candidate_y: int,
     candidate_z: int,
-    exclusion_points: list[tuple[int, int, int]],
+    exclusion_points: list[tuple[int, int, int, int]],
 ) -> bool:
     """Return whether candidate hyperspace exit point satisfies exclusion rules."""
 
-    for point_x, point_y, point_z in exclusion_points:
+    for point_x, point_y, point_z, exclusion_radius_km in exclusion_points:
         distance = _distance_between_points(
             source_x=candidate_x,
             source_y=candidate_y,
@@ -871,7 +895,7 @@ def _hyperspace_exit_is_safe(
             target_y=point_y,
             target_z=point_z,
         )
-        if distance < float(HYPERSPACE_EXIT_MIN_DISTANCE_KM):
+        if distance < float(HYPERSPACE_EXIT_MIN_DISTANCE_KM + max(0, exclusion_radius_km)):
             return False
     return True
 
@@ -1423,8 +1447,12 @@ def get_ship_local_contacts(
         relative_x = int(body.position_x or 0) - ship_x
         relative_y = int(body.position_y or 0) - ship_y
         relative_z = int(body.position_z or 0) - ship_z
-        distance_km = max(_distance_km_from_xyz(
-            relative_x, relative_y, relative_z), 0)
+        distance_km = _surface_distance_km_from_xyz(
+            x=relative_x,
+            y=relative_y,
+            z=relative_z,
+            radius_km=int(body.radius_km or 0),
+        )
         bearing_x = _clamp_bearing(relative_x)
         bearing_y = _clamp_bearing(relative_z)
         scene_x, scene_y, scene_z = _scanner_scene_coordinates(
@@ -1607,6 +1635,11 @@ def get_ship_local_contacts(
         system_id=system.id,
         system_name=system.name,
         generation_version=generation_version,
+        snapshot_version=_local_space_snapshot_version(
+            system_id=int(system.id),
+            generation_version=int(generation_version),
+        ),
+        snapshot_generated_at=datetime.now(timezone.utc),
         contacts=contacts,
     )
 
