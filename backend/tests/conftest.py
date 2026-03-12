@@ -1,6 +1,3 @@
-from app.db.base import Base
-from app.db.session import get_db
-from app.main import app
 import os
 import sys
 from pathlib import Path
@@ -20,6 +17,10 @@ if not TEST_DB_URL:
     pytest.skip("TEST_DATABASE_URL is not set", allow_module_level=True)
 
 os.environ["DATABASE_URL"] = TEST_DB_URL
+
+from app.db.base import Base
+from app.db.session import get_db
+from app.main import app
 
 
 def ensure_test_database(url: str) -> None:
