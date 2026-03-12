@@ -142,6 +142,9 @@ class LocalScannerContact(BaseModel):
     orbiting_planet_name: str | None = None
     station_archetype_shape: str | None = None
     ship_visual_key: str | None = None
+    relative_x_km: int
+    relative_y_km: int
+    relative_z_km: int
     scene_x: float
     scene_y: float
     scene_z: float
@@ -152,6 +155,8 @@ class ShipLocalContactsResponse(BaseModel):
     system_id: int
     system_name: str
     generation_version: int
+    snapshot_version: str
+    snapshot_generated_at: datetime
     contacts: list[LocalScannerContact]
 
 
@@ -162,8 +167,12 @@ class CollisionCheckResponse(BaseModel):
     object_type: str | None
     object_id: str | None
     object_name: str | None
+    collision_context_type: str | None = None
+    resolved_outcome: str = "none"
+    destruction_triggered: bool = False
     distance_km: float | None
     shields_damage: int
     hull_damage: int
+    sfx_event_keys: list[str] = Field(default_factory=list)
     recovered: bool
     message: str
