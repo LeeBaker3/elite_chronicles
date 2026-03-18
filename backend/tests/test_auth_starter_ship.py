@@ -1,6 +1,7 @@
 from app.models.ship import Ship
 from app.models.user import User
 from app.models.world import Faction, StarSystem, Station, StationArchetype
+from app.core.config import settings
 from app.services.auth_service import hash_password
 
 
@@ -66,9 +67,12 @@ def test_register_creates_starter_ship_with_cargo(client, db_session):
     assert response.status_code == 200
     user_id = response.json()["user_id"]
 
+    user = db_session.query(User).filter(User.id == user_id).first()
     ship = db_session.query(Ship).filter(Ship.owner_user_id == user_id).first()
+    assert user is not None
     assert ship is not None
-    assert ship.cargo_capacity > 0
+    assert user.credits == settings.starter_credits
+    assert ship.cargo_capacity == settings.starter_ship_cargo_capacity
     assert ship.status == "docked"
     assert ship.docked_station_id == station_id
 
@@ -114,7 +118,7 @@ def test_login_backfills_cargo_hold_for_existing_ship(client, db_session):
     assert response.status_code == 200
 
     db_session.refresh(ship)
-    assert ship.cargo_capacity == 40
+    assert ship.cargo_capacity == settings.starter_ship_cargo_capacity
 
 
 def test_register_prefers_lave_as_starter_system_when_available(client, db_session):

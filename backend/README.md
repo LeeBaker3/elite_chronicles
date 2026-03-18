@@ -122,6 +122,21 @@ These optional environment variables tune Batch 08 collision behavior:
 - `FLIGHT_COLLISION_GLANCING_MULTIPLIER` (float): glancing impact threshold multiplier.
 - `FLIGHT_COLLISION_CRITICAL_MULTIPLIER` (float): critical impact threshold multiplier.
 
+## Flight Control Tuning (Environment)
+
+These optional environment variables tune the backend-authoritative manual
+flight-control contract without editing application code:
+
+- `FLIGHT_CONTROL_MAX_SPEED_UNITS` (float): maximum persisted movement speed.
+- `FLIGHT_CONTROL_FORWARD_ACCELERATION` (float): forward thrust acceleration rate.
+- `FLIGHT_CONTROL_REVERSE_ACCELERATION` (float): reverse thrust and braking acceleration rate.
+- `FLIGHT_CONTROL_YAW_RATE_DEG_PER_SEC` (float): yaw turn rate in degrees per second.
+- `FLIGHT_CONTROL_PITCH_RATE_DEG_PER_SEC` (float): pitch turn rate in degrees per second.
+- `FLIGHT_CONTROL_ROLL_RATE_DEG_PER_SEC` (float): roll turn rate in degrees per second.
+- `FLIGHT_CONTROL_INPUT_TIMEOUT_SECONDS` (float): maximum age of accepted control input before the backend treats controls as idle.
+- `FLIGHT_CONTROL_SIMULATION_MAX_STEP_SECONDS` (float): maximum catch-up time simulated on one read/snapshot.
+- `FLIGHT_CONTROL_ACTIVE_POLL_INTERVAL_MS` (int): suggested snapshot poll interval while active control motion is present.
+
 ## Batch 04 Live Smoke Flow
 
 Use this to validate the end-to-end loop (trade -> undock -> jump -> dock -> trade)

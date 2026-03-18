@@ -19,10 +19,21 @@ Baseline note:
 | Stations and Locations | `core-stations-locations-design.md` | 5.7, 6.2 | 07, 16 |
 | Story and AI Interaction | `core-story-ai-design.md` | 5.8, 6.6, 8 | 18 |
 | Communications and Messaging | `core-comms-design.md` | 5.9, 7.6 | 03, 14 |
+| Client Platform Contract and Authority | `core-client-platform-contract-design.md` | 5.0, 5.1, 5.2, 5.3, 5.12, 5.13, 5.14 | 12.5 |
 | Audio SFX and Settings | `core-audio-sfx-design.md` | 15.8, 10, 12, 16 | 12 |
 | Missions, Factions, Reputation | `core-missions-factions-reputation-design.md` | 5.10, 6.5, 7.4 | 04, 17, 18 |
 | Admin, Moderation, Observability | `core-admin-ops-design.md` | 5.11, 5.12, 7.7, 11, 13 | 20, 21 |
 | Politics-Economy Coupling | `integration-politics-economy-design.md` | 5.6, 5.10, 9, 15.13 | 17 |
+
+## Platform Runtime Companion Docs
+
+These docs capture platform-specific runtime behavior that must remain aligned
+to shared backend/core authority rules.
+
+| Runtime | Design Doc | PRD Sections | Primary Batches |
+|---|---|---|---|
+| Web Runtime | `frontend-web-runtime-design.md` | 5.0, 5.1, 5.2, 5.3, 5.12, 5.13, 5.14 | 12.5 |
+| Desktop Runtime | `frontend-desktop-runtime-design.md` | 5.0, 5.1, 5.2, 5.3, 5.12, 5.13, 5.14 | 12.5 |
 
 ## Usage Rules
 
@@ -30,3 +41,6 @@ Baseline note:
   design doc in this index.
 - If a new core system emerges, add a new row and create the design doc in
   the same PR.
+- Runtime-specific behavior for web or desktop should live in the companion
+  docs above, not in the shared core-system rows unless it changes shared
+  authority or contract meaning.

@@ -1,7 +1,7 @@
 # Core System Design — Ship Flight and Navigation
 
 Status: Active  
-Last Updated: 2026-03-09  
+Last Updated: 2026-03-12  
 Owners: Product + Backend + Frontend
 
 ## Objective
@@ -12,6 +12,8 @@ Owners: Product + Backend + Frontend
 - Document which coordinate spaces are authoritative, which are presentation
   only, and how contacts must be tracked consistently across backend and
   frontend.
+- Define the shared flight/navigation contract that must remain consistent
+  across first-party runtimes even when web and desktop presentation differs.
 
 ## PRD Alignment
 
@@ -27,6 +29,15 @@ Owners: Product + Backend + Frontend
 
 - None.
 
+### Companion Design Docs
+
+- Shared client-platform authority baseline:
+  `prd/design/core-client-platform-contract-design.md`
+- Browser runtime behavior:
+  `prd/design/frontend-web-runtime-design.md`
+- Desktop runtime behavior:
+  `prd/design/frontend-desktop-runtime-design.md`
+
 ## System Scope
 
 ### In Scope
@@ -37,11 +48,14 @@ Owners: Product + Backend + Frontend
   galactic jump-planning interactions.
 - Docking approach, local transfer, hyperspace jump, collision checks, and
   position synchronization.
+- Shared flight/navigation meanings that must be stable across web and desktop
+  clients.
 
 ### Out of Scope
 - Full orbital mechanics simulation with continuous gravity integration.
 - Newtonian combat flight model.
 - Autonomous NPC navigation authority beyond contact presentation.
+- Platform-specific scene implementation details that belong in runtime docs.
 
 ## Domain Model
 
@@ -67,6 +81,10 @@ Owners: Product + Backend + Frontend
   - `chart_*` are chart display coordinates derived from authoritative world
     positions or from anchored relative positions, not an independent source of
     truth.
+- Multi-client rule:
+  - all first-party clients must preserve the same identity, coordinate, and
+    flight-phase meanings defined here and in
+    `core-client-platform-contract-design.md`.
 - Waypoint and target state:
   - Station hyperspace target is tracked through locked destination station and
     contact fields.
@@ -80,12 +98,29 @@ Owners: Product + Backend + Frontend
 ### 1. World-Space Authority
 
 - Backend ship state is authoritative for all persistent space mechanics.
-- `POST /api/ships/{ship_id}/position-sync` updates persisted ship world
-  position from the active flight scene when the client is in a stable local
-  flight state.
-- `POST /api/ships/{ship_id}/flight-state` persists current phase and locked
-  destination identity so the frontend can restore flight context after reload
-  or subsequent fetches.
+- `GET /api/ships/{ship_id}/flight-snapshot` is the preferred lightweight
+  authoritative polling surface for active clients:
+  - it returns current ship telemetry,
+  - it returns `ship_version` and `local_snapshot_version`,
+  - it returns backend-guided `suggested_poll_interval_ms`,
+  - it indicates whether scanner/chart payloads should be refreshed.
+- `POST /api/ships/{ship_id}/navigation-intent` is the preferred
+  backend-owned correction surface for immediate navigation actions such as
+  `gain_clearance`.
+- `POST /api/ships/{ship_id}/position-sync` remains provisional and should not
+  be treated as the long-term production movement contract.
+- `POST /api/ships/{ship_id}/flight-state` remains provisional for legacy web
+  sequencing and restore behavior.
+- Runtime-specific note:
+  - browser and desktop clients may use different rendering and control
+    strategies, but both must treat backend ship state as the only persistent
+    authority.
+- Scalability rule:
+  - clients render and interpolate locally,
+  - clients poll `flight-snapshot` at backend-guided cadence instead of
+    syncing every frame,
+  - clients refresh heavier local-space payloads only after meaningful state
+    changes, navigation intents, or snapshot-version changes.
 
 ### 2. Contact Generation and Identity
 
@@ -109,6 +144,8 @@ Owners: Product + Backend + Frontend
 - Rule:
   - If a contact has `relative_*_km`, all flight, scanner, marker, and chart
     systems must prefer that data over `scene_*`.
+- This rule is shared across first-party runtimes and must not be redefined in
+  web or desktop rendering code.
 
 ### 3. Scanner Model
 
@@ -130,6 +167,11 @@ Owners: Product + Backend + Frontend
     flight state
   - `POST /api/ships/{ship_id}/scanner-selection` records selected contact
     diagnostics/telemetry only
+- Refresh policy:
+  - scanner contacts should not be polled at render cadence,
+  - clients should use `flight-snapshot` as the authoritative lightweight poll
+    surface and refresh scanner payloads when backend snapshot/version signals
+    require it or after explicit navigation/flight intents complete.
 
 ### 4. Local Chart and World Reconstruction
 
@@ -172,6 +214,12 @@ Owners: Product + Backend + Frontend
     and shape-specific anchor data
   - docking visuals may add presentation detail, but may not redefine target
     identity or contact position authority
+- Runtime split:
+  - this doc defines the shared rendering-input data contract,
+  - browser-specific rendering behavior belongs in
+    `frontend-web-runtime-design.md`,
+  - Panda3D scene, floating-origin, and camera behavior belongs in
+    `frontend-desktop-runtime-design.md`.
 
 ### 6. Waypoint Tracking and Target Priority
 
@@ -266,6 +314,9 @@ Owners: Product + Backend + Frontend
 
 ## API and Data Contracts
 
+Shared client-platform contract reference:
+- `prd/design/core-client-platform-contract-design.md`
+
 ### Contact Contract
 
 | Field Group | Purpose | Canonical Use |
@@ -317,6 +368,9 @@ Owners: Product + Backend + Frontend
 - Docking-state race conditions:
   - docking approach, dock request, position sync, and collision safety
     corridor must remain phase-aware
+- Runtime drift:
+  - web and desktop runtimes must not reinterpret flight phases, target
+    priority, or coordinate authority differently for the same backend state
 
 ## Observability and Operations
 
@@ -358,6 +412,9 @@ Owners: Product + Backend + Frontend
   is introduced later.
 - Whether scanner and chart should expose more explicit debug overlays for
   contact source selection (`relative_*_km` vs fallback) in developer mode.
+- Whether a shared client helper layer should own some flight/navigation
+  contract resolution currently embedded in web runtime code before desktop
+  implementation expands.
 
 ## Batch Change Log
 
@@ -365,3 +422,6 @@ Owners: Product + Backend + Frontend
 - 2026-03-04 — Seeded current-state starter from Batches 01-11.
 - 2026-03-04 — Code-truth audit — Verified implementation state against audited backend and frontend code.
 - 2026-03-09 — Space mechanics rewrite — Expanded doc to define authoritative world space, contact identity, scanner/chart/render contracts, waypoint priority, and local transfer rules.
+- 2026-03-12 — Batch 12.5 — Cross-linked flight/navigation authority to the
+  shared client-platform contract and separated runtime-specific behavior into
+  web and desktop companion docs.

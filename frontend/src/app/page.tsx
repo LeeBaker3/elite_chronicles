@@ -435,6 +435,21 @@ type ShipCargoData = {
 };
 
 type ShipTelemetry = {
+  movement_control: {
+    contract_version: string;
+    velocity_x: number;
+    velocity_y: number;
+    velocity_z: number;
+    heading_yaw_deg: number;
+    heading_pitch_deg: number;
+    heading_roll_deg: number;
+    thrust_input: number;
+    yaw_input: number;
+    pitch_input: number;
+    roll_input: number;
+    brake_active: boolean;
+    control_updated_at: string | null;
+  };
   id: number;
   name: string;
   ship_visual_key: string;
@@ -465,6 +480,28 @@ type ShipTelemetry = {
   flight_phase_started_at: string | null;
   jump_cooldown_seconds: number;
   jump_cooldown_until: string | null;
+};
+
+type FlightSnapshot = {
+  contract_version: string;
+  ship: ShipTelemetry;
+  ship_version: number;
+  current_system_id: number;
+  current_system_name: string;
+  local_snapshot_version: string;
+  chart_contract_version: string;
+  snapshot_generated_at: string;
+  suggested_poll_interval_ms: number;
+  refresh_contacts: boolean;
+  refresh_chart: boolean;
+};
+
+type FlightControlInputState = {
+  thrustInput: number;
+  yawInput: number;
+  pitchInput: number;
+  rollInput: number;
+  brakeActive: boolean;
 };
 
 type ScannerContactType = "ship" | "station" | "planet" | "moon" | "star";
@@ -1052,6 +1089,7 @@ type CommanderProfile = {
   is_alive: boolean;
   location_type: string | null;
   location_id: number | null;
+  primary_ship_id?: number | null;
 };
 
 type MarketStationSummary = {
@@ -1504,11 +1542,28 @@ export default function Home() {
   const [shipTelemetry, setShipTelemetry] = useState<ShipTelemetry | null>(null);
   const [shipTelemetryLoading, setShipTelemetryLoading] = useState(false);
   const [shipTelemetryError, setShipTelemetryError] = useState<string | null>(null);
+  const [flightSnapshotPollIntervalMs, setFlightSnapshotPollIntervalMs] = useState(3000);
+  const [flightSnapshotRefreshHint, setFlightSnapshotRefreshHint] = useState<{
+    systemId: number | null;
+    snapshotVersion: string | null;
+    shipVersion: number | null;
+    refreshContacts: boolean;
+    refreshChart: boolean;
+    revision: number;
+  }>({
+    systemId: null,
+    snapshotVersion: null,
+    shipVersion: null,
+    refreshContacts: false,
+    refreshChart: false,
+    revision: 0,
+  });
   const [scannerContacts, setScannerContacts] = useState<ScannerContact[]>([]);
   const [scannerSystemId, setScannerSystemId] = useState<number | null>(null);
   const [scannerSystemName, setScannerSystemName] = useState<string | null>(null);
   const [, setScannerGenerationVersion] = useState<number | null>(null);
   const [scannerSnapshotVersion, setScannerSnapshotVersion] = useState<string | null>(null);
+  const [scannerContactsShipVersion, setScannerContactsShipVersion] = useState<number | null>(null);
   const [scannerContactsLoading, setScannerContactsLoading] = useState(false);
   const [scannerContactsError, setScannerContactsError] = useState<string | null>(null);
   const [scannerSelectedContactId, setScannerSelectedContactId] = useState<string>(() => {
@@ -1905,14 +1960,16 @@ export default function Home() {
   const flightJumpCompletionVfxTimeoutRef = useRef<number | null>(null);
   const flightJumpCompletionClearTimeoutRef = useRef<number | null>(null);
   const flightJumpStabilizeAudioTimeoutRef = useRef<number | null>(null);
-  const flightPositionSyncInFlightRef = useRef(false);
-  const flightPositionSyncLastSentAtRef = useRef(0);
-  const flightPositionSyncLastScannerRefreshAtRef = useRef(0);
-  const flightPositionSyncLastCoordsRef = useRef<{
-    x: number;
-    y: number;
-    z: number;
-  } | null>(null);
+  const flightControlSyncInFlightRef = useRef(false);
+  const flightControlLastSentAtRef = useRef(0);
+  const flightControlLastSignatureRef = useRef("");
+  const flightSceneControlStateRef = useRef<FlightControlInputState>({
+    thrustInput: 0,
+    yawInput: 0,
+    pitchInput: 0,
+    rollInput: 0,
+    brakeActive: false,
+  });
   const dockingDebugSequenceRef = useRef(0);
   const authExpiredHandledRef = useRef(false);
   const systemChartOpenCountRef = useRef(0);
@@ -2419,6 +2476,24 @@ export default function Home() {
       } else if (typeof lockedId === "number" && lockedId > 0) {
         setFlightDestinationLockedContactId(`station-${lockedId}`);
       }
+
+      const dockingApproachActive = (
+        parsedServerPhase === FLIGHT_PHASE.DOCKING_APPROACH
+        && typeof lockedId === "number"
+        && lockedId > 0
+      );
+      if (dockingApproachActive) {
+        setFlightDockingApproachTargetStationId(lockedId);
+        setFlightDockingApproachTargetContactId(`station-${lockedId}`);
+      } else if (
+        parsedServerPhase === FLIGHT_PHASE.IDLE
+        || parsedServerPhase === FLIGHT_PHASE.ARRIVED
+        || parsedServerPhase === FLIGHT_PHASE.ERROR
+        || lockedId === null
+      ) {
+        setFlightDockingApproachTargetStationId(null);
+        setFlightDockingApproachTargetContactId(null);
+      }
     },
     [],
   );
@@ -2445,57 +2520,23 @@ export default function Home() {
     [],
   );
 
-  const persistFlightState = useCallback(
-    async (
-      phase: FlightJumpPhase,
-      lockedDestinationStationId: number | null,
-      lockedDestinationContactId: string | null = null,
-    ): Promise<void> => {
-      if (!token) {
-        return;
-      }
-
-      const parsedShipId = Number(shipId);
-      if (!Number.isInteger(parsedShipId) || parsedShipId <= 0) {
-        return;
-      }
-
-      try {
-        const parsedLockedContact = lockedDestinationContactId
-          ? parseLocalTargetContactId(lockedDestinationContactId)
-          : null;
-        const contactType = parsedLockedContact?.contactType || null;
-        const contactId = parsedLockedContact?.contactId ?? null;
-        const stationId = lockedDestinationStationId
-          ?? (contactType === "station" ? contactId : null);
-        const response = await fetch(`${API_BASE}/api/ships/${parsedShipId}/flight-state`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            flight_phase: phase,
-            flight_locked_destination_station_id: stationId,
-            flight_locked_destination_contact_type: contactType,
-            flight_locked_destination_contact_id: contactId,
-          }),
-        });
-        if (!response.ok) {
-          return;
-        }
-        const data = await response.json();
-        setShipTelemetry(data);
-        syncJumpCooldownFromShipTelemetry(data);
-        syncFlightStateFromShipTelemetry(data);
-      } catch { }
+  const applyAuthoritativeShipTelemetry = useCallback(
+    (telemetry: ShipTelemetry): void => {
+      setShipTelemetry(telemetry);
+      syncJumpCooldownFromShipTelemetry(telemetry);
+      syncFlightStateFromShipTelemetry(telemetry);
     },
     [
-      shipId,
       syncFlightStateFromShipTelemetry,
       syncJumpCooldownFromShipTelemetry,
-      token,
     ],
+  );
+
+  const handleFlightSceneControlStateChange = useCallback(
+    (nextState: FlightControlInputState): void => {
+      flightSceneControlStateRef.current = nextState;
+    },
+    [],
   );
 
   useEffect(() => {
@@ -3027,6 +3068,14 @@ export default function Home() {
         return;
       }
       setCommanderProfile(data);
+      if (Number.isInteger(data?.primary_ship_id) && Number(data.primary_ship_id) > 0) {
+        setShipId((current) => {
+          if (!current.trim() || current.trim() == "1") {
+            return String(data.primary_ship_id);
+          }
+          return current;
+        });
+      }
     } catch {
       setCommanderProfile(null);
       setCommanderError("Unable to load commander state.");
@@ -3131,11 +3180,15 @@ export default function Home() {
     setShipTelemetryLoading(true);
     setShipTelemetryError(null);
     try {
-      const response = await fetch(`${API_BASE}/api/ships/${parsedShipId}`, {
+      const response = await fetch(`${API_BASE}/api/ships/${parsedShipId}/flight-snapshot`, {
         headers: token
           ? { Authorization: `Bearer ${token}` }
           : undefined,
       });
+      if (response.status === 401) {
+        handleUnauthorizedResponse("Session expired while loading ship telemetry.");
+        return;
+      }
       const data = await response.json();
       if (!response.ok) {
         const message = data?.error?.message || data?.detail || "Ship telemetry unavailable.";
@@ -3146,9 +3199,22 @@ export default function Home() {
         setShipTelemetryError(message);
         return;
       }
-      setShipTelemetry(data);
-      syncJumpCooldownFromShipTelemetry(data);
-      syncFlightStateFromShipTelemetry(data);
+      const snapshot = data as FlightSnapshot;
+      applyAuthoritativeShipTelemetry(snapshot.ship);
+      setFlightSnapshotPollIntervalMs(
+        Number.isFinite(snapshot.suggested_poll_interval_ms)
+          && snapshot.suggested_poll_interval_ms > 0
+          ? snapshot.suggested_poll_interval_ms
+          : 3000,
+      );
+      setFlightSnapshotRefreshHint({
+        systemId: Number.isInteger(snapshot.current_system_id) ? snapshot.current_system_id : null,
+        snapshotVersion: snapshot.local_snapshot_version || null,
+        shipVersion: Number.isInteger(snapshot.ship_version) ? snapshot.ship_version : null,
+        refreshContacts: Boolean(snapshot.refresh_contacts),
+        refreshChart: Boolean(snapshot.refresh_chart),
+        revision: Date.now(),
+      });
     } catch {
       const message = "Ship telemetry unavailable.";
       if (!options?.silent) {
@@ -3160,10 +3226,10 @@ export default function Home() {
       setShipTelemetryLoading(false);
     }
   }, [
+    applyAuthoritativeShipTelemetry,
+    handleUnauthorizedResponse,
     shipId,
     showToast,
-    syncFlightStateFromShipTelemetry,
-    syncJumpCooldownFromShipTelemetry,
     token,
   ]);
 
@@ -3203,17 +3269,14 @@ export default function Home() {
         return null;
       }
       const typedTelemetry = data as ShipTelemetry;
-      setShipTelemetry(typedTelemetry);
-      syncJumpCooldownFromShipTelemetry(typedTelemetry);
-      syncFlightStateFromShipTelemetry(typedTelemetry);
+      applyAuthoritativeShipTelemetry(typedTelemetry);
       return typedTelemetry;
     } catch {
       return null;
     }
   }, [
+    applyAuthoritativeShipTelemetry,
     shipId,
-    syncFlightStateFromShipTelemetry,
-    syncJumpCooldownFromShipTelemetry,
     token,
   ]);
 
@@ -3258,13 +3321,17 @@ export default function Home() {
     shipTelemetry,
   ]);
 
-  const fetchScannerContacts = useCallback(async (options?: { silent?: boolean }) => {
+  const fetchScannerContacts = useCallback(async (options?: {
+    silent?: boolean;
+    shipVersionOverride?: number | null;
+  }) => {
     if (!token) {
       setScannerContacts([]);
       setScannerSystemId(null);
       setScannerSystemName(null);
       setScannerGenerationVersion(null);
       setScannerSnapshotVersion(null);
+      setScannerContactsShipVersion(null);
       setScannerContactsError(null);
       setScannerSelectedContactId("");
       setScannerLiveContacts([]);
@@ -3280,6 +3347,7 @@ export default function Home() {
       setScannerSystemName(null);
       setScannerGenerationVersion(null);
       setScannerSnapshotVersion(null);
+      setScannerContactsShipVersion(null);
       setScannerContactsError("Ship ID must be a valid positive number.");
       setScannerSelectedContactId("");
       setScannerLiveContacts([]);
@@ -3302,6 +3370,7 @@ export default function Home() {
         setScannerSystemName(null);
         setScannerGenerationVersion(null);
         setScannerSnapshotVersion(null);
+        setScannerContactsShipVersion(null);
         setScannerContactsError(message);
         setScannerLiveContacts([]);
         setLocalChartData(null);
@@ -3327,6 +3396,11 @@ export default function Home() {
         Number.isInteger(payload.generation_version) ? payload.generation_version : null,
       );
       setScannerSnapshotVersion(payload.snapshot_version ?? null);
+      setScannerContactsShipVersion(
+        typeof options?.shipVersionOverride === "number"
+          ? options.shipVersionOverride
+          : null,
+      );
       if (
         localChartData
         && !areSnapshotVersionsCompatible(
@@ -3367,6 +3441,7 @@ export default function Home() {
       setScannerSystemName(null);
       setScannerGenerationVersion(null);
       setScannerSnapshotVersion(null);
+      setScannerContactsShipVersion(null);
       setScannerContactsError(message);
       setScannerLiveContacts([]);
       setLocalChartData(null);
@@ -3381,6 +3456,7 @@ export default function Home() {
     dispatchFlightAudioEvent,
     localChartData,
     recordSystemChartSelectionSync,
+    setScannerContactsShipVersion,
     shipId,
     showToast,
     token,
@@ -3469,6 +3545,55 @@ export default function Home() {
     emitSystemChartObservability,
     scannerSnapshotVersion,
     showToast,
+    token,
+  ]);
+
+  useEffect(() => {
+    if (!token || flightSnapshotRefreshHint.revision <= 0) {
+      return;
+    }
+
+    const scannerOutOfDate = (
+      flightSnapshotRefreshHint.refreshContacts
+      && (
+        scannerSystemId !== flightSnapshotRefreshHint.systemId
+        || scannerSnapshotVersion !== flightSnapshotRefreshHint.snapshotVersion
+        || scannerContactsShipVersion !== flightSnapshotRefreshHint.shipVersion
+        || scannerContacts.length === 0
+      )
+    );
+    if (scannerOutOfDate) {
+      void fetchScannerContacts({
+        silent: true,
+        shipVersionOverride: flightSnapshotRefreshHint.shipVersion,
+      });
+      return;
+    }
+
+    if (
+      flightSnapshotRefreshHint.refreshChart
+      && flightSnapshotRefreshHint.systemId
+      && (
+        !localChartData
+        || localChartData.system.id !== flightSnapshotRefreshHint.systemId
+        || buildLocalSpaceSnapshotVersion(
+          localChartData.system.id,
+          localChartData.system.generation_version,
+          localChartData.snapshot_version,
+        ) !== flightSnapshotRefreshHint.snapshotVersion
+      )
+    ) {
+      void fetchLocalChart(flightSnapshotRefreshHint.systemId, { silent: true });
+    }
+  }, [
+    fetchLocalChart,
+    fetchScannerContacts,
+    flightSnapshotRefreshHint,
+    localChartData,
+    scannerContacts.length,
+    scannerContactsShipVersion,
+    scannerSnapshotVersion,
+    scannerSystemId,
     token,
   ]);
 
@@ -3779,9 +3904,7 @@ export default function Home() {
       }
 
       const payload = data as CollisionCheckResponse;
-      setShipTelemetry(mergeCollisionTelemetryShip(payload));
-      syncJumpCooldownFromShipTelemetry(payload.ship);
-      syncFlightStateFromShipTelemetry(payload.ship);
+      applyAuthoritativeShipTelemetry(mergeCollisionTelemetryShip(payload));
       setFlightCollisionStatus(sanitizeCollisionStatusMessage(payload.message));
 
       if (payload.collision) {
@@ -3830,12 +3953,11 @@ export default function Home() {
       setFlightRecentImpacts([]);
     }
   }, [
+    applyAuthoritativeShipTelemetry,
     dispatchCollisionAudioEvents,
     mergeCollisionTelemetryShip,
     shipId,
     showToast,
-    syncFlightStateFromShipTelemetry,
-    syncJumpCooldownFromShipTelemetry,
     token,
     triggerFlightImpactFlash,
     clearFlightImpactFlash,
@@ -6724,16 +6846,15 @@ export default function Home() {
         dispatchFlightAudioEvent("flight.jump_arrived");
       }
       showToast({ message: `Ship ${operation} operation successful.`, variant: "success" });
+      applyAuthoritativeShipTelemetry(data as ShipTelemetry);
       void fetchShipCargo({ silent: true });
       void fetchShipTelemetry({ silent: true });
-      void fetchScannerContacts({ silent: true });
       void fetchShipOperations({ silent: true });
       void fetchCommanderProfile();
       void fetchMissions({ silent: true });
       if (operation === "jump") {
         setCompletedJumps((previous) => previous + 1);
       }
-      syncJumpCooldownFromShipTelemetry(data);
       return true;
     } catch {
       const message = `Unable to ${operation} ship.`;
@@ -6748,12 +6869,12 @@ export default function Home() {
       setShipOpsLoading(false);
     }
   }, [
+    applyAuthoritativeShipTelemetry,
     dockStationId,
     energyRechargeAmount,
     fetchCommanderProfile,
     fetchMissions,
     fetchShipCargo,
-    fetchScannerContacts,
     fetchShipOperations,
     fetchShipTelemetry,
     refuelAmount,
@@ -6763,7 +6884,94 @@ export default function Home() {
     dispatchFlightAudioEvent,
     showToast,
     selectedJumpSystemId,
-    syncJumpCooldownFromShipTelemetry,
+    token,
+  ]);
+
+  const handleNavigationIntent = useCallback(async (
+    action: "gain_clearance" | "begin_docking_approach" | "complete_docking_approach" | "cancel_docking_approach",
+    options?: {
+      stationIdOverride?: number;
+      systemIdOverride?: number;
+      successStatus?: string;
+      successToastMessage?: string;
+      errorMessageFallback?: string;
+      refreshCargo?: boolean;
+      refreshCommander?: boolean;
+      refreshMissions?: boolean;
+    },
+  ): Promise<ShipTelemetry | null> => {
+    if (!token) {
+      return null;
+    }
+
+    const parsedShipId = Number(shipId);
+    if (!Number.isInteger(parsedShipId) || parsedShipId <= 0) {
+      setShipOpsStatus("Ship ID must be a valid positive number.");
+      return null;
+    }
+
+    setShipOpsLoading(true);
+    try {
+      const response = await fetch(`${API_BASE}/api/ships/${parsedShipId}/navigation-intent`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          action,
+          destination_station_id: options?.stationIdOverride ?? null,
+          destination_system_id: options?.systemIdOverride ?? null,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        const message = (
+          data?.error?.message
+          || data?.detail
+          || options?.errorMessageFallback
+          || "Unable to apply navigation command."
+        );
+        setShipOpsStatus(message);
+        showToast({ message, variant: "error" });
+        return null;
+      }
+
+      const typedTelemetry = data as ShipTelemetry;
+      applyAuthoritativeShipTelemetry(typedTelemetry);
+      setShipOpsStatus(options?.successStatus ?? "Navigation command applied.");
+      if (options?.successToastMessage) {
+        showToast({ message: options.successToastMessage, variant: "success" });
+      }
+      void fetchShipTelemetry({ silent: true });
+      void fetchShipOperations({ silent: true });
+      if (options?.refreshCargo) {
+        void fetchShipCargo({ silent: true });
+      }
+      if (options?.refreshCommander) {
+        void fetchCommanderProfile();
+      }
+      if (options?.refreshMissions) {
+        void fetchMissions({ silent: true });
+      }
+      return typedTelemetry;
+    } catch {
+      const message = options?.errorMessageFallback || "Unable to apply navigation command.";
+      setShipOpsStatus(message);
+      showToast({ message, variant: "error" });
+      return null;
+    } finally {
+      setShipOpsLoading(false);
+    }
+  }, [
+    applyAuthoritativeShipTelemetry,
+    fetchCommanderProfile,
+    fetchMissions,
+    fetchShipCargo,
+    fetchShipOperations,
+    fetchShipTelemetry,
+    shipId,
+    showToast,
     token,
   ]);
 
@@ -7190,7 +7398,6 @@ export default function Home() {
       dispatchFlightAudioEvent("chart.waypoint_unlock", {
         station_id: selectedId,
       });
-      void persistFlightState(FLIGHT_PHASE.IDLE, null);
       void updateLocalTargetIntent("clear", null);
       return;
     }
@@ -7205,7 +7412,6 @@ export default function Home() {
       station_id: selectedId,
       contact_id: stationContactId,
     });
-    void persistFlightState(FLIGHT_PHASE.DESTINATION_LOCKED, selectedId, stationContactId);
     void updateLocalTargetIntent("lock", stationContactId);
   }, [
     dispatchFlightAudioEvent,
@@ -7214,7 +7420,6 @@ export default function Home() {
     jumpTargetStationId,
     jumpTargetStationLabel,
     jumpTargetSystemLabel,
-    persistFlightState,
     updateLocalTargetIntent,
   ]);
 
@@ -7287,13 +7492,6 @@ export default function Home() {
         system_id: Number(selectedJumpSystemId),
       });
     }
-    void persistFlightState(
-      FLIGHT_PHASE.CHARGING,
-      stationJumpTargetId,
-      jumpMode === "hyperspace"
-        ? flightDestinationLockedContactId
-        : localTransferTargetContactId,
-    );
     setFlightJumpProgress(0);
     const chargeStep = jumpMode === "hyperspace" ? 5 : 10;
     const chargeSleepMs = jumpMode === "hyperspace" ? 170 : 145;
@@ -7310,13 +7508,6 @@ export default function Home() {
         system_id: Number(selectedJumpSystemId),
       });
     }
-    void persistFlightState(
-      FLIGHT_PHASE.JUMPING,
-      stationJumpTargetId,
-      jumpMode === "hyperspace"
-        ? flightDestinationLockedContactId
-        : localTransferTargetContactId,
-    );
     const jumpStart = jumpMode === "hyperspace" ? 72 : 65;
     const jumpMax = jumpMode === "hyperspace" ? 96 : 92;
     const jumpStep = jumpMode === "hyperspace" ? 3 : 3;
@@ -7359,11 +7550,6 @@ export default function Home() {
       window.setTimeout(() => {
         setFlightJumpPhase(FLIGHT_PHASE.DESTINATION_LOCKED);
         setFlightJumpProgress(0);
-        void persistFlightState(
-          FLIGHT_PHASE.DESTINATION_LOCKED,
-          null,
-          localTransferTargetContactId,
-        );
       }, 1200);
       return;
     }
@@ -7401,34 +7587,20 @@ export default function Home() {
         flightJumpPhaseLockUntilRef.current = 0;
         setFlightJumpPhase(FLIGHT_PHASE.IDLE);
         setFlightJumpProgress(0);
-        void persistFlightState(
-          FLIGHT_PHASE.IDLE,
-          null,
-          null,
-        );
       }, 1200);
       return;
     }
 
     setFlightJumpPhase(FLIGHT_PHASE.ERROR);
     flightJumpPhaseLockUntilRef.current = 0;
-    void persistFlightState(
-      FLIGHT_PHASE.ERROR,
-      stationJumpTargetId,
-      jumpMode === "hyperspace"
-        ? flightDestinationLockedContactId
-        : localTransferTargetContactId,
-    );
     setFlightJumpProgress(0);
   }, [
     dispatchFlightAudioEvent,
     flightDestinationLockedId,
-    flightDestinationLockedContactId,
     flightJumpCooldownSeconds,
     localTransferJumpTargetContactId,
     isDockingApproachActive,
     handleShipOperation,
-    persistFlightState,
     fetchCommanderProfile,
     fetchLocalChart,
     fetchScannerContacts,
@@ -7484,9 +7656,8 @@ export default function Home() {
     showToast,
   ]);
 
-  const syncShipPositionDuringFlight = useCallback(async (
-    nextPosition: { x: number; y: number; z: number },
-    options?: { dockingApproachActive?: boolean },
+  const syncShipFlightControl = useCallback(async (
+    controlState: FlightControlInputState,
   ): Promise<ShipTelemetry | null> => {
     if (!token) {
       return null;
@@ -7498,64 +7669,33 @@ export default function Home() {
     }
 
     try {
-      if (options?.dockingApproachActive) {
-        emitDockingDebugLog("position-sync.request", {
-          nextPosition,
-        });
-      }
-      const response = await fetch(`${API_BASE}/api/ships/${parsedShipId}/position-sync`, {
+      const response = await fetch(`${API_BASE}/api/ships/${parsedShipId}/flight-control`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          position_x: nextPosition.x,
-          position_y: nextPosition.y,
-          position_z: nextPosition.z,
+          thrust_input: controlState.thrustInput,
+          yaw_input: controlState.yawInput,
+          pitch_input: controlState.pitchInput,
+          roll_input: controlState.rollInput,
+          brake_active: controlState.brakeActive,
         }),
       });
       if (!response.ok) {
-        if (options?.dockingApproachActive) {
-          emitDockingDebugLog("position-sync.non-200", {
-            status: response.status,
-          });
-        }
         return null;
       }
 
       const data = await response.json();
       const typedTelemetry = data as ShipTelemetry;
-      if (options?.dockingApproachActive) {
-        emitDockingDebugLog("position-sync.ok", {
-          syncedPosition: {
-            x: typedTelemetry.position_x ?? null,
-            y: typedTelemetry.position_y ?? null,
-            z: typedTelemetry.position_z ?? null,
-          },
-        });
-      }
-      setShipTelemetry(typedTelemetry);
-      flightPositionSyncLastCoordsRef.current = nextPosition;
-
-      const now = Date.now();
-      if (
-        !options?.dockingApproachActive
-        && now - flightPositionSyncLastScannerRefreshAtRef.current >= 1500
-      ) {
-        flightPositionSyncLastScannerRefreshAtRef.current = now;
-        void fetchScannerContacts({ silent: true });
-      }
+      applyAuthoritativeShipTelemetry(typedTelemetry);
       return typedTelemetry;
     } catch {
-      if (options?.dockingApproachActive) {
-        emitDockingDebugLog("position-sync.error");
-      }
       return null;
     }
   }, [
-    emitDockingDebugLog,
-    fetchScannerContacts,
+    applyAuthoritativeShipTelemetry,
     shipId,
     token,
   ]);
@@ -7712,31 +7852,21 @@ export default function Home() {
     dockingApproachCompletionInFlightRef.current = true;
     setFlightJumpProgress(100);
     setShipOpsStatus("Final approach complete. Requesting docking clamps...");
-    const finalDockingPosition = liveStationAnchoredShipPosition
-      ? {
-        x: Math.round(liveStationAnchoredShipPosition.x),
-        y: Math.round(liveStationAnchoredShipPosition.y),
-        z: Math.round(liveStationAnchoredShipPosition.z),
-      }
-      : null;
-    if (finalDockingPosition) {
-      emitDockingDebugLog("dock-request.pre-sync", {
-        stationId,
-        stationLabel,
-        finalDockingPosition,
-      });
-      await syncShipPositionDuringFlight(finalDockingPosition, {
-        dockingApproachActive: true,
-      });
-    }
     emitDockingDebugLog("dock-request.dispatch", {
       stationId,
       stationLabel,
     });
 
-    const success = await handleShipOperation("dock", {
+    const telemetry = await handleNavigationIntent("complete_docking_approach", {
       stationIdOverride: stationId,
+      successStatus: `Docking approach complete. Secured at ${stationLabel}.`,
+      successToastMessage: `Docked at ${stationLabel}.`,
+      errorMessageFallback: "Unable to complete docking approach.",
+      refreshCargo: true,
+      refreshCommander: true,
+      refreshMissions: true,
     });
+    const success = telemetry !== null;
 
     emitDockingDebugLog("dock-request.result", {
       stationId,
@@ -7757,18 +7887,14 @@ export default function Home() {
     });
     setFlightJumpPhase(FLIGHT_PHASE.ERROR);
     setFlightJumpProgress(0);
-    void persistFlightState(FLIGHT_PHASE.ERROR, null);
   }, [
     activeDockTargetContact?.name,
     emitDockingDebugLog,
     dispatchFlightAudioEvent,
     flightDockingApproachTargetStationId,
-    handleShipOperation,
-    liveStationAnchoredShipPosition,
-    persistFlightState,
+    handleNavigationIntent,
     resetDockingApproachState,
     runDockInboundTransitCinematic,
-    syncShipPositionDuringFlight,
   ]);
 
   const handleCancelDockingApproach = useCallback((): void => {
@@ -7780,14 +7906,22 @@ export default function Home() {
       return;
     }
 
-    resetDockingApproachState();
-    setFlightJumpPhase(FLIGHT_PHASE.IDLE);
-    setFlightJumpProgress(0);
-    setShipOpsStatus("Docking approach cancelled. Manual flight control restored.");
-    void persistFlightState(FLIGHT_PHASE.IDLE, null);
+    void (async () => {
+      const telemetry = await handleNavigationIntent("cancel_docking_approach", {
+        successStatus: "Docking approach cancelled. Manual flight control restored.",
+        successToastMessage: "Docking approach cancelled.",
+        errorMessageFallback: "Unable to cancel docking approach.",
+      });
+      if (!telemetry) {
+        return;
+      }
+      resetDockingApproachState();
+      setFlightJumpPhase(FLIGHT_PHASE.IDLE);
+      setFlightJumpProgress(0);
+    })();
   }, [
+    handleNavigationIntent,
     isDockingApproachActive,
-    persistFlightState,
     resetDockingApproachState,
     shipOpsLoading,
   ]);
@@ -7810,51 +7944,43 @@ export default function Home() {
 
       const targetContactId = `station-${parsedDockStationId}`;
       const targetContact = scannerContacts.find((contact) => contact.id === targetContactId);
-
-      if (!targetContact) {
-        emitDockingDebugLog("dock-command.target-sync", {
-          stationId: parsedDockStationId,
-          targetContactId,
-        });
-        setActiveMode("flight");
-        setFlightJumpPhase(FLIGHT_PHASE.DOCKING_APPROACH);
-        setFlightJumpProgress(0);
-        setFlightDockingApproachTargetStationId(parsedDockStationId);
-        setFlightDockingApproachTargetContactId(targetContactId);
-        setShipOpsStatus("Docking target syncing with scanner feed...");
-        dispatchFlightAudioEvent("ops.docking_request_accept", {
-          station_id: parsedDockStationId,
-          source: "sync",
-        });
-        void persistFlightState(FLIGHT_PHASE.DOCKING_APPROACH, parsedDockStationId);
-        return;
-      }
-
       emitDockingDebugLog("dock-command.approach-start", {
         stationId: parsedDockStationId,
         targetContactId,
-        targetName: targetContact.name,
-        targetDistanceKm: targetContact.distance_km,
+        targetName: targetContact?.name ?? null,
+        targetDistanceKm: targetContact?.distance_km ?? null,
       });
+      const stationLabel = targetContact?.name ?? formatStationLabel(parsedDockStationId);
+      const telemetry = await handleNavigationIntent("begin_docking_approach", {
+        stationIdOverride: parsedDockStationId,
+        successStatus: `Docking computer engaged. Approaching ${stationLabel}...`,
+        errorMessageFallback: "Unable to begin docking approach.",
+      });
+      if (!telemetry) {
+        dispatchFlightAudioEvent("ops.docking_request_reject", {
+          station_id: parsedDockStationId,
+          station_name: stationLabel,
+        });
+        return;
+      }
 
       setActiveMode("flight");
       setFlightJumpPhase(FLIGHT_PHASE.DOCKING_APPROACH);
       setFlightJumpProgress(0);
       setFlightDockingApproachTargetStationId(parsedDockStationId);
       setFlightDockingApproachTargetContactId(targetContactId);
-      setShipOpsStatus(`Docking computer engaged. Approaching ${targetContact.name}...`);
       dispatchFlightAudioEvent("ops.docking_request_accept", {
         station_id: parsedDockStationId,
-        station_name: targetContact.name,
+        station_name: stationLabel,
       });
-      void persistFlightState(FLIGHT_PHASE.DOCKING_APPROACH, parsedDockStationId);
     },
     [
       emitDockingDebugLog,
       dispatchFlightAudioEvent,
       dockStationId,
+      formatStationLabel,
+      handleNavigationIntent,
       isDockingApproachActive,
-      persistFlightState,
       scannerContacts,
     ],
   );
@@ -8011,7 +8137,6 @@ export default function Home() {
           station_id: selectedStationId,
           contact_id: selectedContact.id,
         });
-        void persistFlightState(FLIGHT_PHASE.IDLE, null);
         void updateLocalTargetIntent("clear", null);
         return;
       }
@@ -8034,7 +8159,6 @@ export default function Home() {
         station_id: selectedStationId,
         contact_id: selectedContact.id,
       });
-      void persistFlightState(FLIGHT_PHASE.DESTINATION_LOCKED, selectedStationId, selectedContact.id);
       void updateLocalTargetIntent("lock", selectedContact.id);
       return;
     }
@@ -8048,7 +8172,6 @@ export default function Home() {
       dispatchFlightAudioEvent("chart.waypoint_unlock", {
         contact_id: selectedContact.id,
       });
-      void persistFlightState(FLIGHT_PHASE.IDLE, null);
       void updateLocalTargetIntent("clear", null);
       return;
     }
@@ -8066,14 +8189,12 @@ export default function Home() {
     dispatchFlightAudioEvent("chart.waypoint_lock", {
       contact_id: selectedContact.id,
     });
-    void persistFlightState(FLIGHT_PHASE.DESTINATION_LOCKED, null, selectedContact.id);
     void updateLocalTargetIntent("lock", selectedContact.id);
   }, [
     dispatchFlightAudioEvent,
     flightDestinationLockedId,
     flightLocalWaypointContactId,
     isDockingApproachActive,
-    persistFlightState,
     scannerSystemId,
     selectedSystemChartContact,
     selectedSystemChartStationLabel,
@@ -8141,7 +8262,6 @@ export default function Home() {
           contact_name: selectedContact.name,
           distance_km: celestialDistanceKm,
         });
-        void persistFlightState(FLIGHT_PHASE.DESTINATION_LOCKED, null, selectedContact.id);
         setShipOpsStatus(
           `${localTargetAuthorityAvailable ? "Local approach vector set" : "Local approach vector prepared"} for ${selectedContact.name}. Manual flight recommended (${celestialDistanceKm.toFixed(1)} km).`,
         );
@@ -8217,7 +8337,6 @@ export default function Home() {
       setFlightDestinationLockedContactId(targetContactId);
       setFlightJumpPhase(FLIGHT_PHASE.DESTINATION_LOCKED);
       setFlightJumpProgress(0);
-      void persistFlightState(FLIGHT_PHASE.DESTINATION_LOCKED, selectedStationId, targetContactId);
       void updateLocalTargetIntent("lock", targetContactId);
     }
 
@@ -8293,7 +8412,6 @@ export default function Home() {
     handleShipOperation,
     flightDestinationLockedId,
     isDockingApproachActive,
-    persistFlightState,
     updateLocalTargetIntent,
     fetchCommanderProfile,
     fetchLocalChart,
@@ -8567,7 +8685,6 @@ export default function Home() {
       setFlightJumpPhase(FLIGHT_PHASE.ERROR);
       setFlightJumpProgress(0);
       setShipOpsStatus("Docking contact unavailable. Re-select station and retry docking path.");
-      void persistFlightState(FLIGHT_PHASE.ERROR, null);
       return;
     }
 
@@ -8579,7 +8696,6 @@ export default function Home() {
     fetchScannerContacts,
     flightDockingApproachTargetContactId,
     isDockingApproachActive,
-    persistFlightState,
     resetDockingApproachState,
     scannerContacts,
     setFlightJumpPhase,
@@ -8644,9 +8760,7 @@ export default function Home() {
       }
 
       const payload = data as CollisionCheckResponse;
-      setShipTelemetry(mergeCollisionTelemetryShip(payload));
-      syncJumpCooldownFromShipTelemetry(payload.ship);
-      syncFlightStateFromShipTelemetry(payload.ship);
+      applyAuthoritativeShipTelemetry(mergeCollisionTelemetryShip(payload));
       setFlightCollisionStatus(sanitizeCollisionStatusMessage(payload.message));
 
       if (payload.collision) {
@@ -8696,6 +8810,7 @@ export default function Home() {
       collisionRecoveryInFlightRef.current = false;
     }
   }, [
+    applyAuthoritativeShipTelemetry,
     fetchScannerContacts,
     flightCollisionStatus,
     isFlightTransitActive,
@@ -8704,8 +8819,6 @@ export default function Home() {
     mergeCollisionTelemetryShip,
     shipId,
     showToast,
-    syncFlightStateFromShipTelemetry,
-    syncJumpCooldownFromShipTelemetry,
     token,
     triggerFlightImpactFlash,
     clearFlightImpactFlash,
@@ -8790,10 +8903,20 @@ export default function Home() {
       setCargoError(null);
       setShipTelemetry(null);
       setShipTelemetryError(null);
+      setFlightSnapshotPollIntervalMs(3000);
+      setFlightSnapshotRefreshHint({
+        systemId: null,
+        snapshotVersion: null,
+        shipVersion: null,
+        refreshContacts: false,
+        refreshChart: false,
+        revision: 0,
+      });
       setScannerContacts([]);
       setScannerSystemId(null);
       setScannerSystemName(null);
       setScannerGenerationVersion(null);
+      setScannerContactsShipVersion(null);
       setScannerContactsError(null);
       setScannerSelectedContactId("");
       setScannerLiveContacts([]);
@@ -8907,6 +9030,26 @@ export default function Home() {
 
     void fetchLocalChart(scannerSystemId, { silent: true });
   }, [fetchLocalChart, scannerSnapshotVersion, scannerSystemId, token]);
+
+  useEffect(() => {
+    if (!token) {
+      return;
+    }
+
+    const parsedShipId = Number(shipId);
+    if (!Number.isInteger(parsedShipId) || parsedShipId <= 0) {
+      return;
+    }
+
+    void fetchShipTelemetry({ silent: true });
+    const intervalId = window.setInterval(() => {
+      void fetchShipTelemetry({ silent: true });
+    }, flightSnapshotPollIntervalMs);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [fetchShipTelemetry, flightSnapshotPollIntervalMs, shipId, token]);
 
   useEffect(() => {
     if (!token) {
@@ -9431,7 +9574,7 @@ export default function Home() {
 
   useEffect(() => {
     if (!token || shipTelemetry?.status !== "in-space") {
-      flightPositionSyncLastCoordsRef.current = null;
+      flightControlLastSignatureRef.current = "";
       return;
     }
     const jumpPhaseIsStable = (
@@ -9443,50 +9586,51 @@ export default function Home() {
     if (!jumpPhaseIsStable) {
       return;
     }
-    if (isFlightTransitActive || !liveStationAnchoredShipPosition) {
+    if (isDockingApproachActive || isFlightTransitActive) {
       return;
     }
 
-    const roundedPosition = {
-      x: Math.round(liveStationAnchoredShipPosition.x),
-      y: Math.round(liveStationAnchoredShipPosition.y),
-      z: Math.round(liveStationAnchoredShipPosition.z),
-    };
-    const lastPosition = flightPositionSyncLastCoordsRef.current;
-    const minimumAxisDelta = 2;
-    const movedEnough = (
-      lastPosition === null
-      || Math.abs(roundedPosition.x - lastPosition.x) >= minimumAxisDelta
-      || Math.abs(roundedPosition.y - lastPosition.y) >= minimumAxisDelta
-      || Math.abs(roundedPosition.z - lastPosition.z) >= minimumAxisDelta
+    const controlState = flightSceneControlStateRef.current;
+    const signature = JSON.stringify(controlState);
+    const controlsActive = (
+      Math.abs(controlState.thrustInput) > 0.01
+      || Math.abs(controlState.yawInput) > 0.01
+      || Math.abs(controlState.pitchInput) > 0.01
+      || Math.abs(controlState.rollInput) > 0.01
+      || controlState.brakeActive
     );
-    if (!movedEnough) {
+    if (!controlsActive && signature === flightControlLastSignatureRef.current) {
       return;
     }
 
     const now = Date.now();
-    const syncIntervalMs = isDockingApproachActive ? 1200 : 900;
-    if (now - flightPositionSyncLastSentAtRef.current < syncIntervalMs) {
+    const syncIntervalMs = controlsActive ? 500 : 250;
+    const keepAliveIntervalMs = controlsActive ? 900 : syncIntervalMs;
+    if (
+      signature === flightControlLastSignatureRef.current
+      && now - flightControlLastSentAtRef.current < keepAliveIntervalMs
+    ) {
       return;
     }
-    if (flightPositionSyncInFlightRef.current) {
+    if (now - flightControlLastSentAtRef.current < syncIntervalMs) {
+      return;
+    }
+    if (flightControlSyncInFlightRef.current) {
       return;
     }
 
-    flightPositionSyncInFlightRef.current = true;
-    flightPositionSyncLastSentAtRef.current = now;
-    void syncShipPositionDuringFlight(roundedPosition, {
-      dockingApproachActive: isDockingApproachActive,
-    }).finally(() => {
-      flightPositionSyncInFlightRef.current = false;
+    flightControlSyncInFlightRef.current = true;
+    flightControlLastSentAtRef.current = now;
+    void syncShipFlightControl(controlState).finally(() => {
+      flightControlSyncInFlightRef.current = false;
+      flightControlLastSignatureRef.current = signature;
     });
   }, [
     flightJumpPhase,
     isDockingApproachActive,
     isFlightTransitActive,
-    liveStationAnchoredShipPosition,
     shipTelemetry?.status,
-    syncShipPositionDuringFlight,
+    syncShipFlightControl,
     token,
   ]);
 
@@ -9494,6 +9638,14 @@ export default function Home() {
     if (!dockedAtStation) {
       return;
     }
+    flightControlLastSignatureRef.current = "";
+    flightSceneControlStateRef.current = {
+      thrustInput: 0,
+      yawInput: 0,
+      pitchInput: 0,
+      rollInput: 0,
+      brakeActive: false,
+    };
     dispatchFlightAudioEvent("flight.docked_bay_ambience_start", {
       station_id: shipTelemetry?.docked_station_id ?? null,
     });
@@ -12162,8 +12314,17 @@ export default function Home() {
                             scannerRangeKm={scannerRangeKm}
                             scannerContacts={scannerContacts}
                             celestialAnchors={scannerCelestialAnchors}
+                            authoritativeMotionState={shipTelemetry ? {
+                              headingYawDeg: shipTelemetry.movement_control.heading_yaw_deg,
+                              headingPitchDeg: shipTelemetry.movement_control.heading_pitch_deg,
+                              headingRollDeg: shipTelemetry.movement_control.heading_roll_deg,
+                              velocityX: shipTelemetry.movement_control.velocity_x,
+                              velocityY: shipTelemetry.movement_control.velocity_y,
+                              velocityZ: shipTelemetry.movement_control.velocity_z,
+                            } : null}
                             onSpeedChange={setFlightSpeedUnits}
                             onRollChange={setFlightRollDegrees}
+                            onControlStateChange={handleFlightSceneControlStateChange}
                             onScannerTelemetryChange={setScannerLiveContacts}
                             onCollision={
                               isDockingApproachActive

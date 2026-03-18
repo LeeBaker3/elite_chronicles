@@ -20,9 +20,12 @@ from app.models.world import StationArchetype
 from app.models.world import ShipArchetype
 from app.models.world import Commodity
 from app.services.celestial_generation_service import ensure_system_bodies
-from app.schemas.ships import DockRequest, JumpRequest, RechargeRequest
+from app.schemas.ships import DockRequest, JumpPlanResponse, JumpRequest, RechargeRequest
+from app.schemas.ships import FlightControlUpdateRequest
+from app.schemas.ships import FlightSnapshotResponse
 from app.schemas.ships import FlightStateUpdateRequest
 from app.schemas.ships import ShipPositionSyncRequest
+from app.schemas.ships import NavigationIntentRequest
 from app.schemas.ships import LocalTargetIntentRequest
 from app.schemas.ships import RefuelRequest, RepairRequest, ShipResponse
 from app.schemas.ships import DevFuelTopUpRequest
@@ -34,6 +37,9 @@ from app.schemas.ships import ScannerSelectionLogRequest
 
 router = APIRouter()
 api_logger = logging.getLogger("api")
+FLIGHT_CONTROL_CONTRACT_VERSION = "flight-control.v1"
+FLIGHT_SNAPSHOT_CONTRACT_VERSION = "flight-snapshot.v1"
+LOCAL_CHART_CONTRACT_VERSION = "local-chart.v1"
 JUMP_FUEL_COST = 20
 HYPERSPACE_INITIATION_MIN_CLEARANCE_KM = 100
 HYPERSPACE_EXIT_MIN_DISTANCE_KM = 100_000
@@ -108,6 +114,302 @@ COLLISION_DAMAGE_BY_SEVERITY: dict[str, dict[str, tuple[int, int]]] = {
     }
     for severity, per_type in BASE_COLLISION_DAMAGE_BY_SEVERITY.items()
 }
+
+FLIGHT_SNAPSHOT_POLL_MS_BY_STATE: dict[str, int] = {
+    "docked": 3000,
+    "idle": 1250,
+    "destination-locked": 900,
+    "docking-approach": 500,
+    "arrived": 750,
+    "jumping": 400,
+    "charging": 500,
+}
+FLIGHT_CONTROL_MAX_SPEED_UNITS = max(
+    0.1, float(settings.flight_control_max_speed_units)
+)
+FLIGHT_CONTROL_FORWARD_ACCELERATION = max(
+    0.1, float(settings.flight_control_forward_acceleration)
+)
+FLIGHT_CONTROL_REVERSE_ACCELERATION = max(
+    0.1, float(settings.flight_control_reverse_acceleration)
+)
+FLIGHT_CONTROL_YAW_RATE_DEG_PER_SEC = max(
+    0.1, float(settings.flight_control_yaw_rate_deg_per_sec)
+)
+FLIGHT_CONTROL_PITCH_RATE_DEG_PER_SEC = max(
+    0.1, float(settings.flight_control_pitch_rate_deg_per_sec)
+)
+FLIGHT_CONTROL_ROLL_RATE_DEG_PER_SEC = max(
+    0.1, float(settings.flight_control_roll_rate_deg_per_sec)
+)
+FLIGHT_CONTROL_INPUT_TIMEOUT_SECONDS = max(
+    0.1, float(settings.flight_control_input_timeout_seconds)
+)
+FLIGHT_CONTROL_SIMULATION_MAX_STEP_SECONDS = max(
+    0.1, float(settings.flight_control_simulation_max_step_seconds)
+)
+FLIGHT_CONTROL_ACTIVE_POLL_INTERVAL_MS = max(
+    100, int(settings.flight_control_active_poll_interval_ms)
+)
+FLIGHT_CONTROL_EPSILON = 0.0001
+
+
+def _utc_now() -> datetime:
+    """Return one timezone-aware UTC timestamp."""
+
+    return datetime.now(timezone.utc)
+
+
+def _normalize_heading_deg(angle: float) -> float:
+    """Normalize a heading angle into 0 <= x < 360."""
+
+    if not math.isfinite(angle):
+        return 0.0
+    wrapped = angle % 360.0
+    return wrapped + 360.0 if wrapped < 0 else wrapped
+
+
+def _normalize_signed_angle_deg(angle: float) -> float:
+    """Normalize one signed angle into -180 <= x < 180."""
+
+    if not math.isfinite(angle):
+        return 0.0
+    wrapped = (angle + 180.0) % 360.0
+    normalized = wrapped + 360.0 if wrapped < 0 else wrapped
+    return normalized - 180.0
+
+
+def _forward_direction_from_attitude(
+    *,
+    yaw_deg: float,
+    pitch_deg: float,
+) -> tuple[float, float, float]:
+    """Return one normalized forward vector from persisted attitude."""
+
+    yaw_radians = math.radians(yaw_deg)
+    pitch_radians = math.radians(pitch_deg)
+    cos_pitch = math.cos(pitch_radians)
+    return (
+        -math.sin(yaw_radians) * cos_pitch,
+        math.sin(pitch_radians),
+        -math.cos(yaw_radians) * cos_pitch,
+    )
+
+
+def _movement_velocity_components(ship: Ship) -> tuple[float, float, float]:
+    """Return precise motion velocity, falling back to legacy integer fields."""
+
+    precise_components = (
+        float(ship.flight_control_velocity_x or 0.0),
+        float(ship.flight_control_velocity_y or 0.0),
+        float(ship.flight_control_velocity_z or 0.0),
+    )
+    if any(abs(component) > FLIGHT_CONTROL_EPSILON for component in precise_components):
+        return precise_components
+    return (
+        float(ship.velocity_x or 0),
+        float(ship.velocity_y or 0),
+        float(ship.velocity_z or 0),
+    )
+
+
+def _movement_speed(ship: Ship) -> float:
+    """Return speed magnitude for one ship."""
+
+    velocity_x, velocity_y, velocity_z = _movement_velocity_components(ship)
+    return math.sqrt(
+        (velocity_x * velocity_x)
+        + (velocity_y * velocity_y)
+        + (velocity_z * velocity_z)
+    )
+
+
+def _sync_legacy_velocity_fields(
+    *,
+    ship: Ship,
+    velocity_x: float,
+    velocity_y: float,
+    velocity_z: float,
+) -> None:
+    """Keep legacy integer velocity fields aligned with precise velocity."""
+
+    ship.velocity_x = int(round(velocity_x))
+    ship.velocity_y = int(round(velocity_y))
+    ship.velocity_z = int(round(velocity_z))
+
+
+def _clear_flight_control_state(ship: Ship) -> None:
+    """Reset persisted flight-control inputs and precise velocity state."""
+
+    ship.flight_control_velocity_x = 0.0
+    ship.flight_control_velocity_y = 0.0
+    ship.flight_control_velocity_z = 0.0
+    ship.flight_control_thrust_input = 0.0
+    ship.flight_control_yaw_input = 0.0
+    ship.flight_control_pitch_input = 0.0
+    ship.flight_control_roll_input = 0.0
+    ship.flight_control_brake_active = False
+    ship.flight_control_updated_at = None
+    _sync_legacy_velocity_fields(
+        ship=ship,
+        velocity_x=0.0,
+        velocity_y=0.0,
+        velocity_z=0.0,
+    )
+
+
+def _movement_control_state(ship: Ship) -> ShipResponse.MovementControlState:
+    """Return API-facing persisted flight-control state."""
+
+    velocity_x, velocity_y, velocity_z = _movement_velocity_components(ship)
+    return ShipResponse.MovementControlState(
+        contract_version=FLIGHT_CONTROL_CONTRACT_VERSION,
+        velocity_x=round(velocity_x, 3),
+        velocity_y=round(velocity_y, 3),
+        velocity_z=round(velocity_z, 3),
+        heading_yaw_deg=round(float(ship.flight_heading_yaw_deg or 0.0), 3),
+        heading_pitch_deg=round(float(ship.flight_heading_pitch_deg or 0.0), 3),
+        heading_roll_deg=round(float(ship.flight_heading_roll_deg or 0.0), 3),
+        thrust_input=round(float(ship.flight_control_thrust_input or 0.0), 3),
+        yaw_input=round(float(ship.flight_control_yaw_input or 0.0), 3),
+        pitch_input=round(float(ship.flight_control_pitch_input or 0.0), 3),
+        roll_input=round(float(ship.flight_control_roll_input or 0.0), 3),
+        brake_active=bool(ship.flight_control_brake_active),
+        control_updated_at=ship.flight_control_updated_at,
+    )
+
+
+def _advance_ship_motion(ship: Ship, db: Session) -> None:
+    """Advance one ship's persisted motion from control state to current time."""
+
+    if ship.status != "in-space" or ship.docked_station_id is not None:
+        _clear_flight_control_state(ship)
+        return
+
+    now = _utc_now()
+    last_update_at = ship.last_update_at or now
+    if last_update_at.tzinfo is None:
+        last_update_at = last_update_at.replace(tzinfo=timezone.utc)
+    elapsed_seconds = max(0.0, (now - last_update_at).total_seconds())
+    if elapsed_seconds <= FLIGHT_CONTROL_EPSILON:
+        return
+
+    elapsed_seconds = min(
+        elapsed_seconds,
+        FLIGHT_CONTROL_SIMULATION_MAX_STEP_SECONDS,
+    )
+
+    yaw_deg = float(ship.flight_heading_yaw_deg or 0.0)
+    pitch_deg = float(ship.flight_heading_pitch_deg or 0.0)
+    roll_deg = float(ship.flight_heading_roll_deg or 0.0)
+    velocity_x, velocity_y, velocity_z = _movement_velocity_components(ship)
+
+    control_updated_at = ship.flight_control_updated_at
+    if control_updated_at is not None and control_updated_at.tzinfo is None:
+        control_updated_at = control_updated_at.replace(tzinfo=timezone.utc)
+    controls_are_fresh = (
+        control_updated_at is not None
+        and (now - control_updated_at).total_seconds() <= FLIGHT_CONTROL_INPUT_TIMEOUT_SECONDS
+    )
+
+    thrust_input = float(ship.flight_control_thrust_input or 0.0) if controls_are_fresh else 0.0
+    yaw_input = float(ship.flight_control_yaw_input or 0.0) if controls_are_fresh else 0.0
+    pitch_input = float(ship.flight_control_pitch_input or 0.0) if controls_are_fresh else 0.0
+    roll_input = float(ship.flight_control_roll_input or 0.0) if controls_are_fresh else 0.0
+    brake_active = bool(ship.flight_control_brake_active) if controls_are_fresh else False
+
+    if abs(yaw_input) > FLIGHT_CONTROL_EPSILON:
+        yaw_deg = _normalize_heading_deg(
+            yaw_deg + (yaw_input * FLIGHT_CONTROL_YAW_RATE_DEG_PER_SEC * elapsed_seconds)
+        )
+    if abs(pitch_input) > FLIGHT_CONTROL_EPSILON:
+        pitch_deg = _normalize_signed_angle_deg(
+            pitch_deg + (pitch_input * FLIGHT_CONTROL_PITCH_RATE_DEG_PER_SEC * elapsed_seconds)
+        )
+    if abs(roll_input) > FLIGHT_CONTROL_EPSILON:
+        roll_deg = _normalize_signed_angle_deg(
+            roll_deg + (roll_input * FLIGHT_CONTROL_ROLL_RATE_DEG_PER_SEC * elapsed_seconds)
+        )
+
+    if brake_active:
+        speed = math.sqrt(
+            (velocity_x * velocity_x)
+            + (velocity_y * velocity_y)
+            + (velocity_z * velocity_z)
+        )
+        counter_thrust = FLIGHT_CONTROL_REVERSE_ACCELERATION * elapsed_seconds
+        if speed <= counter_thrust:
+            velocity_x = 0.0
+            velocity_y = 0.0
+            velocity_z = 0.0
+        elif speed > FLIGHT_CONTROL_EPSILON:
+            scale = (speed - counter_thrust) / speed
+            velocity_x *= scale
+            velocity_y *= scale
+            velocity_z *= scale
+    elif abs(thrust_input) > FLIGHT_CONTROL_EPSILON:
+        forward_x, forward_y, forward_z = _forward_direction_from_attitude(
+            yaw_deg=yaw_deg,
+            pitch_deg=pitch_deg,
+        )
+        acceleration = (
+            FLIGHT_CONTROL_FORWARD_ACCELERATION * thrust_input
+            if thrust_input > 0
+            else FLIGHT_CONTROL_REVERSE_ACCELERATION * thrust_input
+        )
+        velocity_x += forward_x * acceleration * elapsed_seconds
+        velocity_y += forward_y * acceleration * elapsed_seconds
+        velocity_z += forward_z * acceleration * elapsed_seconds
+        speed = math.sqrt(
+            (velocity_x * velocity_x)
+            + (velocity_y * velocity_y)
+            + (velocity_z * velocity_z)
+        )
+        if speed > FLIGHT_CONTROL_MAX_SPEED_UNITS and speed > FLIGHT_CONTROL_EPSILON:
+            scale = FLIGHT_CONTROL_MAX_SPEED_UNITS / speed
+            velocity_x *= scale
+            velocity_y *= scale
+            velocity_z *= scale
+
+    next_position_x = float(ship.position_x or 0) + (velocity_x * elapsed_seconds)
+    next_position_y = float(ship.position_y or 0) + (velocity_y * elapsed_seconds)
+    next_position_z = float(ship.position_z or 0) + (velocity_z * elapsed_seconds)
+
+    changed = any(
+        [
+            abs(next_position_x - float(ship.position_x or 0)) > FLIGHT_CONTROL_EPSILON,
+            abs(next_position_y - float(ship.position_y or 0)) > FLIGHT_CONTROL_EPSILON,
+            abs(next_position_z - float(ship.position_z or 0)) > FLIGHT_CONTROL_EPSILON,
+            abs(velocity_x - float(ship.flight_control_velocity_x or 0.0)) > FLIGHT_CONTROL_EPSILON,
+            abs(velocity_y - float(ship.flight_control_velocity_y or 0.0)) > FLIGHT_CONTROL_EPSILON,
+            abs(velocity_z - float(ship.flight_control_velocity_z or 0.0)) > FLIGHT_CONTROL_EPSILON,
+            abs(yaw_deg - float(ship.flight_heading_yaw_deg or 0.0)) > FLIGHT_CONTROL_EPSILON,
+            abs(pitch_deg - float(ship.flight_heading_pitch_deg or 0.0)) > FLIGHT_CONTROL_EPSILON,
+            abs(roll_deg - float(ship.flight_heading_roll_deg or 0.0)) > FLIGHT_CONTROL_EPSILON,
+        ]
+    )
+
+    ship.position_x = int(round(next_position_x))
+    ship.position_y = int(round(next_position_y))
+    ship.position_z = int(round(next_position_z))
+    ship.flight_control_velocity_x = float(velocity_x)
+    ship.flight_control_velocity_y = float(velocity_y)
+    ship.flight_control_velocity_z = float(velocity_z)
+    ship.flight_heading_yaw_deg = float(yaw_deg)
+    ship.flight_heading_pitch_deg = float(pitch_deg)
+    ship.flight_heading_roll_deg = float(roll_deg)
+    ship.last_update_at = now
+    _sync_legacy_velocity_fields(
+        ship=ship,
+        velocity_x=velocity_x,
+        velocity_y=velocity_y,
+        velocity_z=velocity_z,
+    )
+
+    if changed:
+        ship.version = (ship.version or 0) + 1
+        db.commit()
+        db.refresh(ship)
 
 
 def _canonicalize_ship_visual_key(raw_key: str) -> str:
@@ -192,6 +494,7 @@ def _restore_ship_to_safe_checkpoint(ship: Ship, user: User) -> None:
     ship.position_x = int(ship.last_safe_position_x or 0)
     ship.position_y = int(ship.last_safe_position_y or 0)
     ship.position_z = int(ship.last_safe_position_z or 0)
+    _clear_flight_control_state(ship)
 
     _set_flight_state(
         ship=ship,
@@ -223,6 +526,7 @@ def _get_ship_for_user(ship_id: int, user: User, db: Session) -> Ship:
         raise HTTPException(status_code=404, detail="Ship not found")
     if ship.owner_user_id != user.id:
         raise HTTPException(status_code=403, detail="Ship access denied")
+    _advance_ship_motion(ship, db)
     return ship
 
 
@@ -350,6 +654,120 @@ def _start_docking_approach(
     return distance_km
 
 
+def _complete_docking_operation(
+    *,
+    ship: Ship,
+    station: Station,
+    user: User,
+    db: Session,
+    require_existing_approach: bool = False,
+) -> ShipResponse:
+    """Dock the ship at the requested station, optionally completing an active approach."""
+
+    if ship.status != "in-space" or ship.docked_station_id is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Ship must be in-space to dock",
+        )
+
+    _validate_ship_docking_range(ship, station)
+
+    active_approach = (
+        normalize_flight_phase(ship.flight_phase or FlightPhase.IDLE.value)
+        == FlightPhase.DOCKING_APPROACH
+        and int(ship.flight_locked_destination_station_id or 0) == int(station.id)
+    )
+    if require_existing_approach and not active_approach:
+        raise HTTPException(
+            status_code=409,
+            detail="Docking approach is not active for the requested station",
+        )
+
+    approach_distance_km: int | None = None
+    if require_existing_approach:
+        approach_distance_km = _distance_between_ship_and_station_km(ship, station)
+    elif settings.dock_approach_enabled:
+        approach_distance_km = _start_docking_approach(
+            ship=ship,
+            station=station,
+            user=user,
+            db=db,
+        )
+
+    ship.status = "docked"
+    ship.docked_station_id = station.id
+    _set_flight_state(
+        ship=ship,
+        phase=FlightPhase.IDLE,
+        locked_destination_station_id=None,
+    )
+    user.location_type = "station"
+    user.location_id = station.id
+    _capture_safe_checkpoint(ship, user)
+    ship.version = (ship.version or 0) + 1
+    db.commit()
+    db.refresh(ship)
+
+    if approach_distance_km is not None:
+        _record_ship_operation(
+            ship=ship,
+            user=user,
+            operation="dock-approach-complete",
+            cost_credits=0,
+            details=(
+                "Completed docking approach at "
+                f"{_format_station_label(station.id, station.name)} "
+                f"({approach_distance_km}km)"
+            ),
+            db=db,
+        )
+    _record_ship_operation(
+        ship=ship,
+        user=user,
+        operation="dock",
+        cost_credits=0,
+        details=f"Docked at {_format_station_label(station.id, station.name)}",
+        db=db,
+    )
+    return _to_ship_response(ship, db)
+
+
+def _begin_docking_approach(
+    *,
+    ship: Ship,
+    station: Station,
+    user: User,
+    db: Session,
+) -> ShipResponse:
+    """Start a backend-owned docking approach for one station target."""
+
+    if ship.status != "in-space" or ship.docked_station_id is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Ship must be in-space to begin docking approach",
+        )
+
+    current_phase = normalize_flight_phase(ship.flight_phase or FlightPhase.IDLE.value)
+    locked_station_id = int(ship.flight_locked_destination_station_id or 0)
+    if current_phase == FlightPhase.DOCKING_APPROACH and locked_station_id == int(station.id):
+        return _to_ship_response(ship, db)
+    if current_phase == FlightPhase.DOCKING_APPROACH and locked_station_id > 0:
+        raise HTTPException(
+            status_code=409,
+            detail="Cancel the active docking approach before selecting a new station",
+        )
+
+    _validate_ship_docking_range(ship, station)
+    _clear_flight_control_state(ship)
+    _start_docking_approach(
+        ship=ship,
+        station=station,
+        user=user,
+        db=db,
+    )
+    return _to_ship_response(ship, db)
+
+
 def _docked_station_archetype(ship: Ship, db: Session) -> tuple[str | None, str | None]:
     """Resolve docked station archetype metadata for visual selection."""
 
@@ -447,8 +865,49 @@ def _to_ship_response(ship: Ship, db: Session) -> ShipResponse:
         ),
         flight_locked_destination_contact_id=ship.flight_locked_destination_contact_id,
         flight_phase_started_at=ship.flight_phase_started_at,
+        movement_control=_movement_control_state(ship),
         jump_cooldown_seconds=cooldown_seconds,
         jump_cooldown_until=cooldown_until,
+    )
+
+
+def _suggested_flight_snapshot_poll_ms(ship: Ship) -> int:
+    """Return backend-recommended poll cadence for authoritative flight refresh."""
+
+    if ship.status == "docked":
+        return FLIGHT_SNAPSHOT_POLL_MS_BY_STATE["docked"]
+    if _movement_speed(ship) > FLIGHT_CONTROL_EPSILON:
+        return FLIGHT_CONTROL_ACTIVE_POLL_INTERVAL_MS
+    phase = (ship.flight_phase or "idle").strip().lower()
+    return FLIGHT_SNAPSHOT_POLL_MS_BY_STATE.get(phase, FLIGHT_SNAPSHOT_POLL_MS_BY_STATE["idle"])
+
+
+def _build_flight_snapshot(
+    *,
+    ship: Ship,
+    current_user: User,
+    db: Session,
+) -> FlightSnapshotResponse:
+    """Return a lightweight authoritative flight snapshot for controlled polling."""
+
+    current_system = _resolve_ship_system(ship, current_user, db)
+    generation_version = int(current_system.generation_version or 1)
+    local_snapshot_version = _local_space_snapshot_version(
+        system_id=int(current_system.id),
+        generation_version=generation_version,
+    )
+    return FlightSnapshotResponse(
+        contract_version=FLIGHT_SNAPSHOT_CONTRACT_VERSION,
+        ship=_to_ship_response(ship, db),
+        ship_version=int(ship.version or 0),
+        current_system_id=int(current_system.id),
+        current_system_name=current_system.name,
+        local_snapshot_version=local_snapshot_version,
+        chart_contract_version=LOCAL_CHART_CONTRACT_VERSION,
+        snapshot_generated_at=datetime.now(timezone.utc),
+        suggested_poll_interval_ms=_suggested_flight_snapshot_poll_ms(ship),
+        refresh_contacts=ship.status == "in-space",
+        refresh_chart=(ship.status == "in-space" and generation_version > 0),
     )
 
 
@@ -847,6 +1306,81 @@ def _nearest_hyperspace_clearance_contact(
     return nearest_label, nearest_distance
 
 
+def _nearest_hyperspace_clearance_contact_for_point(
+    *,
+    point_x: int,
+    point_y: int,
+    point_z: int,
+    system: StarSystem,
+    db: Session,
+) -> tuple[str, float] | None:
+    """Return nearest station/celestial contact for an arbitrary point."""
+
+    nearest_label: str | None = None
+    nearest_distance: float | None = None
+
+    def consider_contact(
+        *,
+        label: str,
+        target_x: int,
+        target_y: int,
+        target_z: int,
+    ) -> None:
+        nonlocal nearest_label, nearest_distance
+
+        distance = _distance_between_points(
+            source_x=point_x,
+            source_y=point_y,
+            source_z=point_z,
+            target_x=target_x,
+            target_y=target_y,
+            target_z=target_z,
+        )
+        if nearest_distance is None or distance < nearest_distance:
+            nearest_label = label
+            nearest_distance = distance
+
+    consider_contact(
+        label=f"star {system.name}",
+        target_x=int(system.position_x or 0),
+        target_y=int(system.position_y or 0),
+        target_z=int(system.position_z or 0),
+    )
+
+    bodies = (
+        db.query(CelestialBody)
+        .filter(
+            CelestialBody.system_id == system.id,
+            CelestialBody.body_kind.in_(["star", "planet", "moon"]),
+        )
+        .all()
+    )
+    for body in bodies:
+        consider_contact(
+            label=f"{body.body_kind} {body.name}",
+            target_x=int(body.position_x or 0),
+            target_y=int(body.position_y or 0),
+            target_z=int(body.position_z or 0),
+        )
+
+    stations = (
+        db.query(Station)
+        .filter(Station.system_id == system.id)
+        .all()
+    )
+    for station in stations:
+        consider_contact(
+            label=f"station {station.name}",
+            target_x=int(station.position_x or 0),
+            target_y=int(station.position_y or 0),
+            target_z=int(station.position_z or 0),
+        )
+
+    if nearest_label is None or nearest_distance is None:
+        return None
+    return nearest_label, nearest_distance
+
+
 def _enforce_hyperspace_initiation_clearance(
     *,
     ship: Ship,
@@ -874,6 +1408,256 @@ def _enforce_hyperspace_initiation_clearance(
             f"{HYPERSPACE_INITIATION_MIN_CLEARANCE_KM}km clearance; "
             f"nearest {nearest_label} is {int(round(nearest_distance))}km away"
         ),
+    )
+
+
+def _recommended_clearance_waypoint(
+    *,
+    ship: Ship,
+    system: StarSystem,
+    db: Session,
+) -> tuple[int, int, int] | None:
+    """Return a backend-owned waypoint that should satisfy hyperspace clearance."""
+
+    system_x = int(system.position_x or 0)
+    system_y = int(system.position_y or 0)
+    system_z = int(system.position_z or 0)
+    ship_x = int(ship.position_x or 0)
+    ship_y = int(ship.position_y or 0)
+    ship_z = int(ship.position_z or 0)
+
+    vector_x = ship_x - system_x
+    vector_y = ship_y - system_y
+    vector_z = ship_z - system_z
+    magnitude = math.sqrt((vector_x * vector_x) + (vector_y * vector_y) + (vector_z * vector_z))
+    if magnitude <= 0:
+        vector_x = 1
+        vector_y = 0
+        vector_z = 0
+        magnitude = 1.0
+
+    unit_x = vector_x / magnitude
+    unit_y = vector_y / magnitude
+    unit_z = vector_z / magnitude
+
+    clearance_target_km = HYPERSPACE_INITIATION_MIN_CLEARANCE_KM + 20
+    for step_index in range(0, 12):
+        radius_km = clearance_target_km + (step_index * 50)
+        candidate_x = int(round(system_x + (unit_x * radius_km)))
+        candidate_y = int(round(system_y + (unit_y * radius_km)))
+        candidate_z = int(round(system_z + (unit_z * radius_km)))
+        nearest_contact = _nearest_hyperspace_clearance_contact_for_point(
+            point_x=candidate_x,
+            point_y=candidate_y,
+            point_z=candidate_z,
+            system=system,
+            db=db,
+        )
+        if nearest_contact is None:
+            return candidate_x, candidate_y, candidate_z
+        _, nearest_distance = nearest_contact
+        if nearest_distance >= float(HYPERSPACE_INITIATION_MIN_CLEARANCE_KM):
+            return candidate_x, candidate_y, candidate_z
+    return None
+
+
+def _resolve_jump_destination(
+    *,
+    db: Session,
+    destination_station_id: int | None,
+    destination_system_id: int | None,
+) -> tuple[Station | None, StarSystem]:
+    """Resolve jump destination station/system from the incoming request."""
+
+    destination_station: Station | None = None
+    destination_system: StarSystem | None = None
+
+    if destination_station_id is not None:
+        destination_station = (
+            db.query(Station)
+            .filter(Station.id == destination_station_id)
+            .first()
+        )
+        if destination_station is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Destination station not found",
+            )
+        destination_system = (
+            db.query(StarSystem)
+            .filter(StarSystem.id == destination_station.system_id)
+            .first()
+        )
+    elif destination_system_id is not None:
+        destination_system = (
+            db.query(StarSystem)
+            .filter(StarSystem.id == destination_system_id)
+            .first()
+        )
+        if destination_system is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Destination system not found",
+            )
+        destination_station = (
+            db.query(Station)
+            .filter(Station.system_id == destination_system.id)
+            .order_by(Station.id.asc())
+            .first()
+        )
+        if destination_station is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Destination system has no dockable station",
+            )
+    else:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Jump destination requires destination_station_id "
+                "or destination_system_id"
+            ),
+        )
+
+    if destination_system is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Destination system not found",
+        )
+    return destination_station, destination_system
+
+
+def _build_jump_plan(
+    *,
+    ship: Ship,
+    current_user: User,
+    requested_destination_station_id: int | None,
+    requested_destination_system_id: int | None,
+    db: Session,
+) -> JumpPlanResponse:
+    """Return the authoritative next jump recommendation for a ship."""
+
+    current_system = _resolve_ship_system(ship, current_user, db)
+    destination_station, destination_system = _resolve_jump_destination(
+        db=db,
+        destination_station_id=requested_destination_station_id,
+        destination_system_id=requested_destination_system_id,
+    )
+
+    requested_mode = (
+        "local_approach"
+        if destination_station is not None and destination_station.system_id == current_system.id
+        else "hyperspace"
+    )
+    recommended_mode = requested_mode
+    recommended_destination_station = destination_station
+    recommended_destination_system = destination_system
+    requested_action_executable = True
+    recommended_action_executable = True
+    next_action = "jump"
+    next_action_executable = True
+    next_action_message: str | None = None
+    requires_undock = False
+    blocked_reason_code: str | None = None
+    blocked_reason_message: str | None = None
+    nearest_clearance_contact_name: str | None = None
+    nearest_clearance_distance_km: int | None = None
+    clearance_waypoint_x: int | None = None
+    clearance_waypoint_y: int | None = None
+    clearance_waypoint_z: int | None = None
+
+    if ship.status != "in-space" or ship.docked_station_id is not None:
+        requested_action_executable = False
+        recommended_action_executable = True
+        requires_undock = True
+        next_action = "undock"
+        next_action_executable = True
+        next_action_message = "Undock before attempting the requested jump."
+        blocked_reason_code = "requires_undock"
+        blocked_reason_message = "Ship must be in-space to jump"
+    elif requested_mode == "hyperspace":
+        cooldown_remaining_seconds, _ = _jump_cooldown_state(db, ship.id)
+        if cooldown_remaining_seconds > 0:
+            requested_action_executable = False
+            recommended_action_executable = False
+            next_action = "wait"
+            next_action_executable = False
+            next_action_message = (
+                f"Wait for jump cooldown to expire ({cooldown_remaining_seconds}s remaining)."
+            )
+            blocked_reason_code = "jump_cooldown"
+            blocked_reason_message = (
+                f"Jump cooldown active ({cooldown_remaining_seconds}s remaining)"
+            )
+        else:
+            nearest_contact = _nearest_hyperspace_clearance_contact(
+                ship=ship,
+                system=current_system,
+                db=db,
+            )
+            if nearest_contact is not None:
+                contact_name, contact_distance = nearest_contact
+                nearest_clearance_contact_name = contact_name
+                nearest_clearance_distance_km = int(round(contact_distance))
+                if contact_distance < float(HYPERSPACE_INITIATION_MIN_CLEARANCE_KM):
+                    requested_action_executable = False
+                    blocked_reason_code = "clearance_required"
+                    blocked_reason_message = (
+                        "Hyperspace jump requires at least "
+                        f"{HYPERSPACE_INITIATION_MIN_CLEARANCE_KM}km clearance; "
+                        f"nearest {contact_name} is {nearest_clearance_distance_km}km away"
+                    )
+                    next_action = "gain_clearance"
+                    next_action_message = (
+                        "Move to the recommended clearance waypoint before initiating hyperspace."
+                    )
+                    waypoint = _recommended_clearance_waypoint(
+                        ship=ship,
+                        system=current_system,
+                        db=db,
+                    )
+                    if waypoint is None:
+                        recommended_action_executable = False
+                        next_action_executable = False
+                    else:
+                        clearance_waypoint_x, clearance_waypoint_y, clearance_waypoint_z = waypoint
+                        next_action_executable = True
+
+        if requested_action_executable and ship.fuel_current < JUMP_FUEL_COST:
+            requested_action_executable = False
+            recommended_action_executable = False
+            next_action = "refuel"
+            next_action_executable = False
+            next_action_message = "Acquire fuel before attempting hyperspace."
+            blocked_reason_code = "insufficient_fuel"
+            blocked_reason_message = "Insufficient fuel for jump"
+
+    return JumpPlanResponse(
+        current_system_id=current_system.id,
+        requested_destination_station_id=requested_destination_station_id,
+        requested_destination_system_id=requested_destination_system_id,
+        recommended_destination_station_id=(
+            recommended_destination_station.id if recommended_destination_station else None
+        ),
+        recommended_destination_system_id=(
+            recommended_destination_system.id if recommended_destination_system else None
+        ),
+        requested_mode=requested_mode,
+        recommended_mode=recommended_mode,
+        requested_action_executable=requested_action_executable,
+        recommended_action_executable=recommended_action_executable,
+        next_action=next_action,
+        next_action_executable=next_action_executable,
+        next_action_message=next_action_message,
+        requires_undock=requires_undock,
+        blocked_reason_code=blocked_reason_code,
+        blocked_reason_message=blocked_reason_message,
+        nearest_clearance_contact_name=nearest_clearance_contact_name,
+        nearest_clearance_distance_km=nearest_clearance_distance_km,
+        clearance_required_km=HYPERSPACE_INITIATION_MIN_CLEARANCE_KM,
+        clearance_waypoint_x=clearance_waypoint_x,
+        clearance_waypoint_y=clearance_waypoint_y,
+        clearance_waypoint_z=clearance_waypoint_z,
     )
 
 
@@ -1413,6 +2197,8 @@ def get_ship(ship_id: int, db: Session = Depends(get_db)):
     if not ship:
         raise HTTPException(status_code=404, detail="Ship not found")
 
+    _advance_ship_motion(ship, db)
+
     return _to_ship_response(ship, db)
 
 
@@ -1735,55 +2521,18 @@ def dock_ship(
         Station.id == payload.station_id).first()
     if not station:
         raise HTTPException(status_code=404, detail="Station not found")
-    if ship.status != "in-space" or ship.docked_station_id is not None:
-        raise HTTPException(
-            status_code=409, detail="Ship must be in-space to dock")
-
-    _validate_ship_docking_range(ship, station)
-    approach_distance_km: int | None = None
-    if settings.dock_approach_enabled:
-        approach_distance_km = _start_docking_approach(
-            ship=ship,
-            station=station,
-            user=current_user,
-            db=db,
-        )
-
-    ship.status = "docked"
-    ship.docked_station_id = payload.station_id
-    _set_flight_state(
-        ship=ship,
-        phase=FlightPhase.IDLE,
-        locked_destination_station_id=None,
+    active_approach = (
+        normalize_flight_phase(ship.flight_phase or FlightPhase.IDLE.value)
+        == FlightPhase.DOCKING_APPROACH
+        and int(ship.flight_locked_destination_station_id or 0) == int(station.id)
     )
-    current_user.location_type = "station"
-    current_user.location_id = payload.station_id
-    _capture_safe_checkpoint(ship, current_user)
-    ship.version = (ship.version or 0) + 1
-    db.commit()
-    db.refresh(ship)
-    if approach_distance_km is not None:
-        _record_ship_operation(
-            ship=ship,
-            user=current_user,
-            operation="dock-approach-complete",
-            cost_credits=0,
-            details=(
-                "Completed docking approach at "
-                f"{_format_station_label(station.id, station.name)} "
-                f"({approach_distance_km}km)"
-            ),
-            db=db,
-        )
-    _record_ship_operation(
+    return _complete_docking_operation(
         ship=ship,
+        station=station,
         user=current_user,
-        operation="dock",
-        cost_credits=0,
-        details=f"Docked at {_format_station_label(station.id, station.name)}",
         db=db,
+        require_existing_approach=active_approach,
     )
-    return _to_ship_response(ship, db)
 
 
 @router.post("/{ship_id}/undock", response_model=ShipResponse)
@@ -1820,6 +2569,7 @@ def undock_ship(
         ship.position_z = int(
             origin_station.position_z or 0) + UNDOCK_EXIT_OFFSET_Z_KM
     ship.docked_station_id = None
+    _clear_flight_control_state(ship)
     _set_flight_state(
         ship=ship,
         phase=FlightPhase.IDLE,
@@ -2057,55 +2807,11 @@ def jump_ship(
 ):
     ship = _get_ship_for_user(ship_id, current_user, db)
     current_system = _resolve_ship_system(ship, current_user, db)
-    destination_station: Station | None = None
-    destination_system: StarSystem | None = None
-
-    if payload.destination_station_id is not None:
-        destination_station = (
-            db.query(Station)
-            .filter(Station.id == payload.destination_station_id)
-            .first()
-        )
-        if destination_station is None:
-            raise HTTPException(
-                status_code=404,
-                detail="Destination station not found",
-            )
-        destination_system = (
-            db.query(StarSystem)
-            .filter(StarSystem.id == destination_station.system_id)
-            .first()
-        )
-    elif payload.destination_system_id is not None:
-        destination_system = (
-            db.query(StarSystem)
-            .filter(StarSystem.id == payload.destination_system_id)
-            .first()
-        )
-        if destination_system is None:
-            raise HTTPException(
-                status_code=404,
-                detail="Destination system not found",
-            )
-        destination_station = (
-            db.query(Station)
-            .filter(Station.system_id == destination_system.id)
-            .order_by(Station.id.asc())
-            .first()
-        )
-        if destination_station is None:
-            raise HTTPException(
-                status_code=409,
-                detail="Destination system has no dockable station",
-            )
-    else:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                "Jump destination requires destination_station_id "
-                "or destination_system_id"
-            ),
-        )
+    destination_station, destination_system = _resolve_jump_destination(
+        db=db,
+        destination_station_id=payload.destination_station_id,
+        destination_system_id=payload.destination_system_id,
+    )
 
     is_local_approach = (
         payload.local_approach
@@ -2143,6 +2849,7 @@ def jump_ship(
     ship.fuel_current -= fuel_cost
     ship.status = "in-space"
     ship.docked_station_id = None
+    _clear_flight_control_state(ship)
 
     if is_local_approach:
         locked_destination_station_id = destination_station.id
@@ -2196,6 +2903,193 @@ def jump_ship(
         db=db,
     )
     return _to_ship_response(ship, db)
+
+
+@router.get("/{ship_id}/jump-plan", response_model=JumpPlanResponse)
+def get_jump_plan(
+    ship_id: int,
+    destination_station_id: int | None = Query(default=None),
+    destination_system_id: int | None = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    ship = _get_ship_for_user(ship_id, current_user, db)
+    return _build_jump_plan(
+        ship=ship,
+        current_user=current_user,
+        requested_destination_station_id=destination_station_id,
+        requested_destination_system_id=destination_system_id,
+        db=db,
+    )
+
+
+@router.get("/{ship_id}/flight-snapshot", response_model=FlightSnapshotResponse)
+def get_flight_snapshot(
+    ship_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    ship = _get_ship_for_user(ship_id, current_user, db)
+    return _build_flight_snapshot(
+        ship=ship,
+        current_user=current_user,
+        db=db,
+    )
+
+
+@router.post("/{ship_id}/flight-control", response_model=ShipResponse)
+def update_flight_control(
+    ship_id: int,
+    payload: FlightControlUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Persist authoritative manual-flight control inputs for backend simulation."""
+
+    ship = _get_ship_for_user(ship_id, current_user, db)
+
+    if ship.status != "in-space" or ship.docked_station_id is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Ship must be in-space for flight control",
+        )
+
+    ship.flight_control_thrust_input = float(payload.thrust_input)
+    ship.flight_control_yaw_input = float(payload.yaw_input)
+    ship.flight_control_pitch_input = float(payload.pitch_input)
+    ship.flight_control_roll_input = float(payload.roll_input)
+    ship.flight_control_brake_active = bool(payload.brake_active)
+    ship.flight_control_updated_at = _utc_now()
+    ship.version = (ship.version or 0) + 1
+
+    db.commit()
+    db.refresh(ship)
+    return _to_ship_response(ship, db)
+
+
+@router.post("/{ship_id}/navigation-intent", response_model=ShipResponse)
+def apply_navigation_intent(
+    ship_id: int,
+    payload: NavigationIntentRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Execute one backend-owned navigation intent for the active ship."""
+
+    ship = _get_ship_for_user(ship_id, current_user, db)
+
+    if payload.action == "gain_clearance":
+        jump_plan = _build_jump_plan(
+            ship=ship,
+            current_user=current_user,
+            requested_destination_station_id=payload.destination_station_id,
+            requested_destination_system_id=payload.destination_system_id,
+            db=db,
+        )
+        if jump_plan.next_action != "gain_clearance":
+            raise HTTPException(
+                status_code=409,
+                detail=jump_plan.next_action_message
+                or "Gain-clearance intent is not valid for the current ship state",
+            )
+        if (
+            jump_plan.clearance_waypoint_x is None
+            or jump_plan.clearance_waypoint_y is None
+            or jump_plan.clearance_waypoint_z is None
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="No clearance waypoint available for gain-clearance intent",
+            )
+
+        ship.position_x = int(jump_plan.clearance_waypoint_x)
+        ship.position_y = int(jump_plan.clearance_waypoint_y)
+        ship.position_z = int(jump_plan.clearance_waypoint_z)
+        _clear_flight_control_state(ship)
+        ship.version = (ship.version or 0) + 1
+        db.commit()
+        db.refresh(ship)
+        _record_ship_operation(
+            ship=ship,
+            user=current_user,
+            operation="navigation-gain-clearance",
+            cost_credits=0,
+            details=(
+                "Moved to backend clearance waypoint "
+                f"({ship.position_x}, {ship.position_y}, {ship.position_z})"
+            ),
+            db=db,
+        )
+        return _to_ship_response(ship, db)
+
+    if payload.action == "cancel_docking_approach":
+        current_phase = normalize_flight_phase(ship.flight_phase or FlightPhase.IDLE.value)
+        if current_phase != FlightPhase.DOCKING_APPROACH:
+            return _to_ship_response(ship, db)
+        if ship.status != "in-space" or ship.docked_station_id is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="Ship must be in-space to cancel docking approach",
+            )
+
+        cancelled_station_id = (
+            int(ship.flight_locked_destination_station_id)
+            if ship.flight_locked_destination_station_id is not None
+            else None
+        )
+        _set_flight_state(
+            ship=ship,
+            phase=FlightPhase.IDLE,
+            locked_destination_station_id=None,
+        )
+        ship.version = (ship.version or 0) + 1
+        db.commit()
+        db.refresh(ship)
+        _record_ship_operation(
+            ship=ship,
+            user=current_user,
+            operation="dock-approach-cancel",
+            cost_credits=0,
+            details=(
+                "Cancelled docking approach"
+                + (
+                    f" to station {cancelled_station_id}"
+                    if cancelled_station_id is not None
+                    else ""
+                )
+            ),
+            db=db,
+        )
+        return _to_ship_response(ship, db)
+
+    station_id = int(payload.destination_station_id or 0)
+    if payload.action in {"begin_docking_approach", "complete_docking_approach"}:
+        if station_id <= 0:
+            raise HTTPException(
+                status_code=422,
+                detail="Docking navigation intent requires destination_station_id",
+            )
+        station = db.query(Station).filter(Station.id == station_id).first()
+        if station is None:
+            raise HTTPException(status_code=404, detail="Station not found")
+
+        if payload.action == "begin_docking_approach":
+            return _begin_docking_approach(
+                ship=ship,
+                station=station,
+                user=current_user,
+                db=db,
+            )
+
+        return _complete_docking_operation(
+            ship=ship,
+            station=station,
+            user=current_user,
+            db=db,
+            require_existing_approach=True,
+        )
+
+    raise HTTPException(status_code=422, detail="Unsupported navigation intent")
 
 
 @router.post("/{ship_id}/local-target", response_model=ShipResponse)
@@ -2299,7 +3193,16 @@ def update_local_target(
     ship.position_x = target_x + longitudinal_offset_km
     ship.position_y = target_y + (vertical_sign * vertical_km)
     ship.position_z = target_z + (lateral_sign * lateral_km)
-    ship.velocity_x = max(1, longitudinal_offset_km // 5)
+    ship.flight_control_velocity_x = 0.0
+    ship.flight_control_velocity_y = 0.0
+    ship.flight_control_velocity_z = 0.0
+    ship.flight_control_thrust_input = 0.0
+    ship.flight_control_yaw_input = 0.0
+    ship.flight_control_pitch_input = 0.0
+    ship.flight_control_roll_input = 0.0
+    ship.flight_control_brake_active = False
+    ship.flight_control_updated_at = None
+    ship.velocity_x = 0
     ship.velocity_y = 0
     ship.velocity_z = 0
     ship.status = "in-space"
@@ -2695,6 +3598,7 @@ def sync_ship_position(
     ship.position_x = int(payload.position_x)
     ship.position_y = int(payload.position_y)
     ship.position_z = int(payload.position_z)
+    _clear_flight_control_state(ship)
     ship.version = (ship.version or 0) + 1
 
     db.commit()

@@ -8,7 +8,25 @@ Command clearance console for Elite Chronicles.
 
 - backend/ FastAPI services, migrations, and tests.
 - frontend/ Next.js interface.
+- desktop/ Panda3D desktop client.
 - prd/ Product notes and session history.
+
+Desktop-client direction note:
+
+- The repository now treats desktop as a parallel first-party client beside
+	the existing web client.
+- Backend remains authoritative; web and desktop consume shared contracts.
+
+Environment model:
+
+- `backend/` continues to use the existing backend Python environment.
+- `desktop/` should use its own local virtual environment, typically
+	`desktop/.venv`.
+- The desktop client talks to the same running backend service over HTTP; it
+	does not share the backend runtime environment by default.
+- Backend flight-control tuning is environment-backed in `backend/.env`
+	and documented in `backend/README.md` so movement behavior does not require
+	source edits per deployment.
 
 ## Product Docs
 

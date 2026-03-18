@@ -47,6 +47,8 @@ Use `template-core-system-design.md` as the base and keep these sections:
 
 - `core-<system>-design.md` for long-lived system docs.
 - `integration-<domain>-design.md` for cross-system coupling docs.
+- `frontend-<platform>-runtime-design.md` for platform-specific runtime docs
+   that depend on shared core-system authority.
 
 ## Index
 

@@ -230,6 +230,7 @@ def test_players_me_returns_profile(client, auth_headers):
     assert payload["email"] == "pilot@example.com"
     assert payload["username"] == "pilot"
     assert payload["is_alive"] is True
+    assert payload["primary_ship_id"] is not None
 
 
 def test_ship_undock_and_refuel_flow(client, db_session):
@@ -1627,6 +1628,90 @@ def test_ship_flight_state_update_rejects_invalid_phase(client, db_session):
     assert response.status_code == 422
 
 
+def test_ship_flight_control_persists_inputs_and_snapshot_advances_motion(
+    client,
+    db_session,
+):
+    headers = auth_headers_for(
+        client, "flightcontrol@example.com", "flightcontrol"
+    )
+    owner = db_session.query(User).filter(
+        User.email == "flightcontrol@example.com"
+    ).first()
+    assert owner is not None
+    state = seed_core_state(db_session, owner_user_id=owner.id)
+
+    undock = client.post(
+        f"/api/ships/{state['ship_id']}/undock",
+        headers=headers,
+    )
+    assert undock.status_code == 200
+
+    control = client.post(
+        f"/api/ships/{state['ship_id']}/flight-control",
+        json={
+            "thrust_input": 1,
+            "yaw_input": 0,
+            "pitch_input": 0,
+            "roll_input": 0,
+            "brake_active": False,
+        },
+        headers=headers,
+    )
+    assert control.status_code == 200
+    control_payload = control.json()
+    assert control_payload["movement_control"]["contract_version"] == "flight-control.v1"
+    assert control_payload["movement_control"]["thrust_input"] == 1
+    assert control_payload["movement_control"]["brake_active"] is False
+
+    ship = db_session.query(Ship).filter(Ship.id == state["ship_id"]).first()
+    assert ship is not None
+    assert ship.flight_control_updated_at is not None
+    control_version = int(ship.version or 0)
+    assert ship.last_update_at is not None
+    ship.last_update_at = ship.last_update_at - timedelta(seconds=1)
+    db_session.commit()
+
+    snapshot = client.get(
+        f"/api/ships/{state['ship_id']}/flight-snapshot",
+        headers=headers,
+    )
+    assert snapshot.status_code == 200
+    snapshot_payload = snapshot.json()
+    ship_payload = snapshot_payload["ship"]
+    assert snapshot_payload["contract_version"] == "flight-snapshot.v1"
+    assert snapshot_payload["suggested_poll_interval_ms"] == 450
+    assert ship_payload["movement_control"]["velocity_z"] < 0
+    assert ship_payload["position_z"] < 8
+    assert snapshot_payload["ship_version"] > control_version
+
+
+def test_ship_flight_control_rejects_docked_ship(client, db_session):
+    headers = auth_headers_for(
+        client,
+        "flightcontroldocked@example.com",
+        "flightcontroldocked",
+    )
+    owner = db_session.query(User).filter(
+        User.email == "flightcontroldocked@example.com"
+    ).first()
+    assert owner is not None
+    state = seed_core_state(db_session, owner_user_id=owner.id)
+
+    response = client.post(
+        f"/api/ships/{state['ship_id']}/flight-control",
+        json={
+            "thrust_input": 1,
+            "yaw_input": 0,
+            "pitch_input": 0,
+            "roll_input": 0,
+            "brake_active": False,
+        },
+        headers=headers,
+    )
+    assert response.status_code == 409
+
+
 def test_ship_dock_normalizes_persisted_flight_state(client, db_session):
     headers = auth_headers_for(client, "flightdock@example.com", "flightdock")
     owner = db_session.query(User).filter(
@@ -1768,6 +1853,373 @@ def test_ship_jump_requires_100km_clearance_from_local_bodies(client, db_session
         or ""
     )
     assert "100km clearance" in blocked_message
+
+
+def test_ship_jump_plan_recommends_local_approach_for_same_system_destination(client, db_session):
+    headers = auth_headers_for(client, "jumpplanlocal@example.com", "jumpplanlocal")
+    owner = db_session.query(User).filter(
+        User.email == "jumpplanlocal@example.com"
+    ).first()
+    assert owner is not None
+    state = seed_core_state(db_session, owner_user_id=owner.id)
+
+    undock = client.post(
+        f"/api/ships/{state['ship_id']}/undock",
+        headers=headers,
+    )
+    assert undock.status_code == 200
+
+    plan = client.get(
+        f"/api/ships/{state['ship_id']}/jump-plan",
+        params={"destination_station_id": state["station_2_id"]},
+        headers=headers,
+    )
+    assert plan.status_code == 200
+    payload = plan.json()
+    assert payload["requested_mode"] == "local_approach"
+    assert payload["recommended_mode"] == "local_approach"
+    assert payload["requested_action_executable"] is True
+    assert payload["recommended_action_executable"] is True
+    assert payload["next_action"] == "jump"
+    assert payload["next_action_executable"] is True
+    assert payload["recommended_destination_station_id"] == state["station_2_id"]
+
+
+def test_ship_jump_plan_requests_clearance_waypoint_when_hyperspace_is_clearance_blocked(client, db_session):
+    headers = auth_headers_for(client, "jumpplanfallback@example.com", "jumpplanfallback")
+    owner = db_session.query(User).filter(
+        User.email == "jumpplanfallback@example.com"
+    ).first()
+    assert owner is not None
+    state = seed_core_state(db_session, owner_user_id=owner.id)
+
+    current_station = (
+        db_session.query(Station)
+        .filter(Station.id == state["station_1_id"])
+        .first()
+    )
+    assert current_station is not None
+
+    remote_system = StarSystem(
+        name="Remote Jump System",
+        seed="remote-jump-seed",
+        position_x=500,
+        position_y=0,
+        position_z=500,
+        economy_type="mixed",
+        tech_level=4,
+        faction_id=current_station.faction_id,
+    )
+    db_session.add(remote_system)
+    db_session.flush()
+
+    remote_station = Station(
+        system_id=remote_system.id,
+        name="Remote Tradeport",
+        archetype_id=current_station.archetype_id,
+        position_x=10,
+        position_y=0,
+        position_z=10,
+        services_json={"market": True},
+        faction_id=current_station.faction_id,
+        tech_level=4,
+        ai_story_available=False,
+    )
+    db_session.add(remote_station)
+    db_session.commit()
+
+    undock = client.post(
+        f"/api/ships/{state['ship_id']}/undock",
+        headers=headers,
+    )
+    assert undock.status_code == 200
+
+    plan = client.get(
+        f"/api/ships/{state['ship_id']}/jump-plan",
+        params={"destination_station_id": remote_station.id},
+        headers=headers,
+    )
+    assert plan.status_code == 200
+    payload = plan.json()
+    assert payload["requested_mode"] == "hyperspace"
+    assert payload["requested_action_executable"] is False
+    assert payload["recommended_mode"] == "hyperspace"
+    assert payload["recommended_action_executable"] is True
+    assert payload["next_action"] == "gain_clearance"
+    assert payload["next_action_executable"] is True
+    assert payload["blocked_reason_code"] == "clearance_required"
+    assert payload["recommended_destination_system_id"] == remote_system.id
+    assert payload["recommended_destination_station_id"] == remote_station.id
+    assert payload["nearest_clearance_distance_km"] is not None
+    assert payload["clearance_waypoint_x"] is not None
+    assert payload["clearance_waypoint_y"] is not None
+    assert payload["clearance_waypoint_z"] is not None
+
+
+def test_ship_navigation_intent_gain_clearance_moves_ship_to_backend_waypoint(client, db_session):
+    headers = auth_headers_for(client, "gainclearance@example.com", "gainclearance")
+    owner = db_session.query(User).filter(
+        User.email == "gainclearance@example.com"
+    ).first()
+    assert owner is not None
+    state = seed_core_state(db_session, owner_user_id=owner.id)
+
+    current_station = (
+        db_session.query(Station)
+        .filter(Station.id == state["station_1_id"])
+        .first()
+    )
+    assert current_station is not None
+
+    remote_system = StarSystem(
+        name="Clearance Jump System",
+        seed="clearance-jump-seed",
+        position_x=600,
+        position_y=0,
+        position_z=600,
+        economy_type="mixed",
+        tech_level=4,
+        faction_id=current_station.faction_id,
+    )
+    db_session.add(remote_system)
+    db_session.flush()
+
+    remote_station = Station(
+        system_id=remote_system.id,
+        name="Clearance Port",
+        archetype_id=current_station.archetype_id,
+        position_x=12,
+        position_y=0,
+        position_z=12,
+        services_json={"market": True},
+        faction_id=current_station.faction_id,
+        tech_level=4,
+        ai_story_available=False,
+    )
+    db_session.add(remote_station)
+    db_session.commit()
+
+    undock = client.post(
+        f"/api/ships/{state['ship_id']}/undock",
+        headers=headers,
+    )
+    assert undock.status_code == 200
+
+    plan = client.get(
+        f"/api/ships/{state['ship_id']}/jump-plan",
+        params={"destination_station_id": remote_station.id},
+        headers=headers,
+    )
+    assert plan.status_code == 200
+    plan_payload = plan.json()
+    assert plan_payload["next_action"] == "gain_clearance"
+
+    move = client.post(
+        f"/api/ships/{state['ship_id']}/navigation-intent",
+        json={
+            "action": "gain_clearance",
+            "destination_station_id": remote_station.id,
+        },
+        headers=headers,
+    )
+    assert move.status_code == 200
+    move_payload = move.json()
+    assert move_payload["status"] == "in-space"
+    assert move_payload["position_x"] == plan_payload["clearance_waypoint_x"]
+    assert move_payload["position_y"] == plan_payload["clearance_waypoint_y"]
+    assert move_payload["position_z"] == plan_payload["clearance_waypoint_z"]
+
+    post_move_plan = client.get(
+        f"/api/ships/{state['ship_id']}/jump-plan",
+        params={"destination_station_id": remote_station.id},
+        headers=headers,
+    )
+    assert post_move_plan.status_code == 200
+    post_move_payload = post_move_plan.json()
+    assert post_move_payload["next_action"] == "jump"
+    assert post_move_payload["requested_action_executable"] is True
+
+
+def test_ship_navigation_intent_begin_docking_approach_persists_phase(client, db_session):
+    headers = auth_headers_for(client, "dockintentstart@example.com", "dockintentstart")
+    owner = db_session.query(User).filter(
+        User.email == "dockintentstart@example.com"
+    ).first()
+    assert owner is not None
+    state = seed_core_state(db_session, owner_user_id=owner.id)
+
+    undock = client.post(
+        f"/api/ships/{state['ship_id']}/undock",
+        headers=headers,
+    )
+    assert undock.status_code == 200
+
+    begin = client.post(
+        f"/api/ships/{state['ship_id']}/navigation-intent",
+        json={
+            "action": "begin_docking_approach",
+            "destination_station_id": state["station_2_id"],
+        },
+        headers=headers,
+    )
+    assert begin.status_code == 200
+    payload = begin.json()
+    assert payload["status"] == "in-space"
+    assert payload["flight_phase"] == "docking-approach"
+    assert payload["flight_locked_destination_station_id"] == state["station_2_id"]
+
+    operations = client.get(
+        f"/api/ships/{state['ship_id']}/operations",
+        headers=headers,
+    )
+    assert operations.status_code == 200
+    operation_names = [entry["operation"] for entry in operations.json()]
+    assert "dock-approach-start" in operation_names
+
+
+def test_ship_navigation_intent_complete_docking_approach_docks_ship(client, db_session):
+    headers = auth_headers_for(client, "dockintentcomplete@example.com", "dockintentcomplete")
+    owner = db_session.query(User).filter(
+        User.email == "dockintentcomplete@example.com"
+    ).first()
+    assert owner is not None
+    state = seed_core_state(db_session, owner_user_id=owner.id)
+
+    undock = client.post(
+        f"/api/ships/{state['ship_id']}/undock",
+        headers=headers,
+    )
+    assert undock.status_code == 200
+
+    begin = client.post(
+        f"/api/ships/{state['ship_id']}/navigation-intent",
+        json={
+            "action": "begin_docking_approach",
+            "destination_station_id": state["station_2_id"],
+        },
+        headers=headers,
+    )
+    assert begin.status_code == 200
+
+    complete = client.post(
+        f"/api/ships/{state['ship_id']}/navigation-intent",
+        json={
+            "action": "complete_docking_approach",
+            "destination_station_id": state["station_2_id"],
+        },
+        headers=headers,
+    )
+    assert complete.status_code == 200
+    payload = complete.json()
+    assert payload["status"] == "docked"
+    assert payload["docked_station_id"] == state["station_2_id"]
+    assert payload["flight_phase"] == "idle"
+    assert payload["flight_locked_destination_station_id"] is None
+
+    operations = client.get(
+        f"/api/ships/{state['ship_id']}/operations",
+        headers=headers,
+    )
+    assert operations.status_code == 200
+    operation_names = [entry["operation"] for entry in operations.json()]
+    assert operation_names.count("dock-approach-start") == 1
+    assert "dock-approach-complete" in operation_names
+    assert "dock" in operation_names
+
+
+def test_ship_navigation_intent_cancel_docking_approach_clears_phase(client, db_session):
+    headers = auth_headers_for(client, "dockintentcancel@example.com", "dockintentcancel")
+    owner = db_session.query(User).filter(
+        User.email == "dockintentcancel@example.com"
+    ).first()
+    assert owner is not None
+    state = seed_core_state(db_session, owner_user_id=owner.id)
+
+    undock = client.post(
+        f"/api/ships/{state['ship_id']}/undock",
+        headers=headers,
+    )
+    assert undock.status_code == 200
+
+    begin = client.post(
+        f"/api/ships/{state['ship_id']}/navigation-intent",
+        json={
+            "action": "begin_docking_approach",
+            "destination_station_id": state["station_2_id"],
+        },
+        headers=headers,
+    )
+    assert begin.status_code == 200
+
+    cancel = client.post(
+        f"/api/ships/{state['ship_id']}/navigation-intent",
+        json={"action": "cancel_docking_approach"},
+        headers=headers,
+    )
+    assert cancel.status_code == 200
+    payload = cancel.json()
+    assert payload["status"] == "in-space"
+    assert payload["flight_phase"] == "idle"
+    assert payload["flight_locked_destination_station_id"] is None
+
+    operations = client.get(
+        f"/api/ships/{state['ship_id']}/operations",
+        headers=headers,
+    )
+    assert operations.status_code == 200
+    operation_names = [entry["operation"] for entry in operations.json()]
+    assert "dock-approach-cancel" in operation_names
+
+
+def test_flight_snapshot_returns_versioned_poll_guidance_for_docked_ship(client, db_session):
+    headers = auth_headers_for(client, "flightsnapshotdock@example.com", "flightsnapshotdock")
+    owner = db_session.query(User).filter(
+        User.email == "flightsnapshotdock@example.com"
+    ).first()
+    assert owner is not None
+    state = seed_core_state(db_session, owner_user_id=owner.id)
+
+    snapshot = client.get(
+        f"/api/ships/{state['ship_id']}/flight-snapshot",
+        headers=headers,
+    )
+    assert snapshot.status_code == 200
+    payload = snapshot.json()
+    assert payload["contract_version"] == "flight-snapshot.v1"
+    assert payload["ship"]["status"] == "docked"
+    assert payload["ship_version"] >= 0
+    assert payload["current_system_id"] == state["system_id"]
+    assert payload["local_snapshot_version"].startswith(f"system-{state['system_id']}-gen-")
+    assert payload["chart_contract_version"] == "local-chart.v1"
+    assert payload["suggested_poll_interval_ms"] == 3000
+    assert payload["refresh_contacts"] is False
+    assert payload["refresh_chart"] is False
+
+
+def test_flight_snapshot_recommends_faster_polling_in_space(client, db_session):
+    headers = auth_headers_for(client, "flightsnapshotspace@example.com", "flightsnapshotspace")
+    owner = db_session.query(User).filter(
+        User.email == "flightsnapshotspace@example.com"
+    ).first()
+    assert owner is not None
+    state = seed_core_state(db_session, owner_user_id=owner.id)
+
+    undock = client.post(
+        f"/api/ships/{state['ship_id']}/undock",
+        headers=headers,
+    )
+    assert undock.status_code == 200
+
+    snapshot = client.get(
+        f"/api/ships/{state['ship_id']}/flight-snapshot",
+        headers=headers,
+    )
+    assert snapshot.status_code == 200
+    payload = snapshot.json()
+    assert payload["ship"]["status"] == "in-space"
+    assert payload["suggested_poll_interval_ms"] == 1250
+    assert payload["refresh_contacts"] is True
+    assert payload["refresh_chart"] is True
 
 
 def test_ship_manual_arrived_update_normalizes_to_idle(client, db_session):

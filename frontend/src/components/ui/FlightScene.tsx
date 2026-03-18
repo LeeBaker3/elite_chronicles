@@ -72,6 +72,23 @@ type FlightSceneSpawnDirective = {
 
 type FlightCameraMode = "boresight" | "cockpit";
 
+type FlightControlState = {
+    thrustInput: number;
+    yawInput: number;
+    pitchInput: number;
+    rollInput: number;
+    brakeActive: boolean;
+};
+
+type AuthoritativeMotionState = {
+    headingYawDeg: number;
+    headingPitchDeg: number;
+    headingRollDeg: number;
+    velocityX: number;
+    velocityY: number;
+    velocityZ: number;
+};
+
 type FlightSceneProps = {
     jumpPhase:
     | "idle"
@@ -93,8 +110,10 @@ type FlightSceneProps = {
     scannerRangeKm?: number;
     scannerContacts: ScannerAnchorContact[];
     celestialAnchors: CelestialPresentationAnchor[];
+    authoritativeMotionState?: AuthoritativeMotionState | null;
     onSpeedChange?: (speed: number) => void;
     onRollChange?: (rollDegrees: number) => void;
+    onControlStateChange?: (state: FlightControlState) => void;
     onScannerTelemetryChange?: (contacts: ScannerTelemetryContact[]) => void;
     onCollision?: (event: FlightSceneCollisionEvent) => void;
     dockingApproachContactId?: string | null;
@@ -1594,8 +1613,10 @@ function FlightSceneContent({
     scannerRangeKm = 25,
     scannerContacts,
     celestialAnchors,
+    authoritativeMotionState,
     onSpeedChange,
     onRollChange,
+    onControlStateChange,
     onScannerTelemetryChange,
     onCollision,
     dockingApproachContactId,
@@ -1617,8 +1638,10 @@ function FlightSceneContent({
     scannerRangeKm?: number;
     scannerContacts: ScannerAnchorContact[];
     celestialAnchors: CelestialPresentationAnchor[];
+    authoritativeMotionState?: AuthoritativeMotionState | null;
     onSpeedChange?: (speed: number) => void;
     onRollChange?: (rollDegrees: number) => void;
+    onControlStateChange?: (state: FlightControlState) => void;
     onScannerTelemetryChange?: (contacts: ScannerTelemetryContact[]) => void;
     onCollision?: (event: FlightSceneCollisionEvent) => void;
     dockingApproachContactId?: string | null;
@@ -1657,6 +1680,9 @@ function FlightSceneContent({
     const worldVelocityRef = useRef(new Vector3());
     const lastReportedSpeedRef = useRef(Number.NaN);
     const lastReportedRollRef = useRef(Number.NaN);
+    const lastReportedControlSignatureRef = useRef("");
+    const lastReportedControlAtRef = useRef(0);
+    const authoritativeMotionInitializedRef = useRef(false);
     const yawRef = useRef(0);
     const pitchRef = useRef(0);
     const rollRef = useRef(0);
@@ -1736,6 +1762,23 @@ function FlightSceneContent({
     const DOCKING_PORT_THRESHOLD = 0.28;
     const DOCKING_PORT_FALLBACK_THRESHOLD = 0.48;
     const DOCKING_PORT_MIN_STANDOFF_KM = 0.02;
+
+    useEffect(() => {
+        if (authoritativeMotionInitializedRef.current || !authoritativeMotionState) {
+            return;
+        }
+
+        yawRef.current = Math.PI * (authoritativeMotionState.headingYawDeg / 180);
+        pitchRef.current = Math.PI * (authoritativeMotionState.headingPitchDeg / 180);
+        rollRef.current = Math.PI * (authoritativeMotionState.headingRollDeg / 180);
+        worldVelocityRef.current.set(
+            authoritativeMotionState.velocityX,
+            authoritativeMotionState.velocityY,
+            authoritativeMotionState.velocityZ,
+        );
+        velocityRef.current = worldVelocityRef.current.length();
+        authoritativeMotionInitializedRef.current = true;
+    }, [authoritativeMotionState]);
     const DOCKING_PORT_SURFACE_CLEARANCE_KM = 0.035;
     const DOCKING_HOLD_DISTANCE_MIN = 2.35;
     const DOCKING_HOLD_DISTANCE_MAX = 3.25;
@@ -2291,6 +2334,14 @@ function FlightSceneContent({
         if (!ship) {
             return;
         }
+
+        let controlStateForBackend: FlightControlState = {
+            thrustInput: 0,
+            yawInput: 0,
+            pitchInput: 0,
+            rollInput: 0,
+            brakeActive: false,
+        };
 
         const dockingApproachRequested = Boolean(dockingApproachContactId);
         const isDockingApproachActive = Boolean(
@@ -3210,6 +3261,14 @@ function FlightSceneContent({
             const throttleToZero = input.throttleToZero;
             const pitchInput = (input.pitchUp ? 1 : 0) - (input.pitchDown ? 1 : 0);
 
+            controlStateForBackend = {
+                thrustInput: throttleInput,
+                yawInput,
+                pitchInput,
+                rollInput,
+                brakeActive: throttleToZero,
+            };
+
             yawRef.current = normalizeHeading(yawRef.current + yawInput * 1.6 * delta);
             pitchRef.current = advanceManualPitch(
                 pitchRef.current,
@@ -3247,6 +3306,27 @@ function FlightSceneContent({
                 REVERSE_SPEED_LIMIT,
                 FORWARD_SPEED_LIMIT,
             );
+        }
+
+        if (onControlStateChange) {
+            const signature = JSON.stringify(controlStateForBackend);
+            const nowMs = performance.now();
+            const controlsActive = (
+                Math.abs(controlStateForBackend.thrustInput) > 0.01
+                || Math.abs(controlStateForBackend.yawInput) > 0.01
+                || Math.abs(controlStateForBackend.pitchInput) > 0.01
+                || Math.abs(controlStateForBackend.rollInput) > 0.01
+                || controlStateForBackend.brakeActive
+            );
+            const keepAliveMs = controlsActive ? 450 : 250;
+            if (
+                signature !== lastReportedControlSignatureRef.current
+                || nowMs - lastReportedControlAtRef.current >= keepAliveMs
+            ) {
+                lastReportedControlSignatureRef.current = signature;
+                lastReportedControlAtRef.current = nowMs;
+                onControlStateChange(controlStateForBackend);
+            }
         }
 
         if (onSpeedChange) {
@@ -3950,8 +4030,10 @@ export function FlightScene(props: FlightSceneProps): ReactElement {
         scannerRangeKm = 25,
         scannerContacts,
         celestialAnchors,
+        authoritativeMotionState,
         onSpeedChange,
         onRollChange,
+        onControlStateChange,
         onScannerTelemetryChange,
         onCollision,
         dockingApproachContactId,
@@ -4023,8 +4105,10 @@ export function FlightScene(props: FlightSceneProps): ReactElement {
                             scannerRangeKm={scannerRangeKm}
                             scannerContacts={scannerContacts}
                             celestialAnchors={celestialAnchors}
+                            authoritativeMotionState={authoritativeMotionState}
                             onSpeedChange={onSpeedChange}
                             onRollChange={onRollChange}
+                            onControlStateChange={onControlStateChange}
                             onScannerTelemetryChange={onScannerTelemetryChange}
                             onCollision={onCollision}
                             dockingApproachContactId={dockingApproachContactId}

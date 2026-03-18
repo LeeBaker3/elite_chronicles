@@ -25,6 +25,58 @@ class JumpRequest(BaseModel):
 
 
 LocalTargetContactType = Literal["station", "planet", "moon", "star"]
+JumpMode = Literal["hyperspace", "local_approach"]
+JumpBlockReasonCode = Literal[
+    "requires_undock",
+    "jump_cooldown",
+    "clearance_required",
+    "insufficient_fuel",
+]
+JumpNextAction = Literal["undock", "gain_clearance", "jump", "wait", "refuel"]
+NavigationIntentAction = Literal[
+    "gain_clearance",
+    "begin_docking_approach",
+    "complete_docking_approach",
+    "cancel_docking_approach",
+]
+
+
+class JumpPlanResponse(BaseModel):
+    current_system_id: int
+    requested_destination_station_id: int | None
+    requested_destination_system_id: int | None
+    recommended_destination_station_id: int | None
+    recommended_destination_system_id: int | None
+    requested_mode: JumpMode
+    recommended_mode: JumpMode
+    requested_action_executable: bool
+    recommended_action_executable: bool
+    next_action: JumpNextAction
+    next_action_executable: bool
+    next_action_message: str | None = None
+    requires_undock: bool
+    blocked_reason_code: JumpBlockReasonCode | None = None
+    blocked_reason_message: str | None = None
+    nearest_clearance_contact_name: str | None = None
+    nearest_clearance_distance_km: int | None = None
+    clearance_required_km: int | None = None
+    clearance_waypoint_x: int | None = None
+    clearance_waypoint_y: int | None = None
+    clearance_waypoint_z: int | None = None
+
+
+class NavigationIntentRequest(BaseModel):
+    action: NavigationIntentAction
+    destination_station_id: int | None = None
+    destination_system_id: int | None = None
+
+
+class FlightControlUpdateRequest(BaseModel):
+    thrust_input: float = Field(default=0, ge=-1, le=1)
+    yaw_input: float = Field(default=0, ge=-1, le=1)
+    pitch_input: float = Field(default=0, ge=-1, le=1)
+    roll_input: float = Field(default=0, ge=-1, le=1)
+    brake_active: bool = False
 
 
 class FlightStateUpdateRequest(BaseModel):
@@ -80,6 +132,21 @@ class ShipCargoResponse(BaseModel):
 
 
 class ShipResponse(BaseModel):
+    class MovementControlState(BaseModel):
+        contract_version: str
+        velocity_x: float
+        velocity_y: float
+        velocity_z: float
+        heading_yaw_deg: float
+        heading_pitch_deg: float
+        heading_roll_deg: float
+        thrust_input: float
+        yaw_input: float
+        pitch_input: float
+        roll_input: float
+        brake_active: bool
+        control_updated_at: datetime | None
+
     id: int
     name: str
     ship_visual_key: str
@@ -111,8 +178,23 @@ class ShipResponse(BaseModel):
     flight_locked_destination_contact_type: LocalTargetContactType | None
     flight_locked_destination_contact_id: int | None
     flight_phase_started_at: datetime | None
+    movement_control: MovementControlState
     jump_cooldown_seconds: int
     jump_cooldown_until: datetime | None
+
+
+class FlightSnapshotResponse(BaseModel):
+    contract_version: str
+    ship: ShipResponse
+    ship_version: int
+    current_system_id: int
+    current_system_name: str
+    local_snapshot_version: str
+    chart_contract_version: str
+    snapshot_generated_at: datetime
+    suggested_poll_interval_ms: int
+    refresh_contacts: bool
+    refresh_chart: bool
 
 
 class ShipOperationLogEntry(BaseModel):
