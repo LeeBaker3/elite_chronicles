@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.db.session import get_db
 from app.models.ship import Ship
 from app.models.session import Session as DbSession
@@ -13,7 +14,6 @@ from app.services.auth_service import hash_password, verify_password
 from app.services.starter_location_service import resolve_starter_station
 
 router = APIRouter()
-STARTER_CARGO_CAPACITY = 40
 
 
 def _ensure_user_starter_ship(db: Session, user: User) -> None:
@@ -28,7 +28,7 @@ def _ensure_user_starter_ship(db: Session, user: User) -> None:
     if ships:
         if all(int(ship.cargo_capacity or 0) <= 0 for ship in ships):
             primary_ship = ships[0]
-            primary_ship.cargo_capacity = STARTER_CARGO_CAPACITY
+            primary_ship.cargo_capacity = settings.starter_ship_cargo_capacity
             db.commit()
         return
 
@@ -47,7 +47,7 @@ def _ensure_user_starter_ship(db: Session, user: User) -> None:
         energy_current=60,
         fuel_cap=100,
         fuel_current=100,
-        cargo_capacity=STARTER_CARGO_CAPACITY,
+        cargo_capacity=settings.starter_ship_cargo_capacity,
         status=ship_status,
         docked_station_id=docked_station_id,
     )
@@ -70,6 +70,7 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
         email=payload.email,
         username=payload.username,
         password_hash=hash_password(payload.password),
+        credits=settings.starter_credits,
     )
     db.add(user)
     db.commit()

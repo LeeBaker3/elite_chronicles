@@ -10,3 +10,4 @@ class PlayerMeResponse(BaseModel):
     is_alive: bool
     location_type: str | None
     location_id: int | None
+    primary_ship_id: int | None = None

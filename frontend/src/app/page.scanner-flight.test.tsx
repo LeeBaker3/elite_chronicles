@@ -10,8 +10,17 @@ vi.mock("next/dynamic", () => ({
     function MockFlightScene(props: {
       focusedContact: { name?: string } | null;
       jumpPhase?: string;
+      cameraMode?: "boresight" | "cockpit";
+      scannerRangeKm?: number;
       showContactLabels?: boolean;
-      celestialAnchors?: Array<{ id: string; body_kind?: string }>;
+      waypointContactId?: string | null;
+      celestialAnchors?: Array<{
+        id: string;
+        body_kind?: string;
+        relative_x_km?: number;
+        relative_y_km?: number;
+        relative_z_km?: number;
+      }>;
       dockingApproachContactId?: string | null;
       onDockingApproachComplete?: () => void;
       scannerContacts?: Array<{ id: string; distance_km?: number }>;
@@ -20,6 +29,9 @@ vi.mock("next/dynamic", () => ({
         relative_x: number;
         relative_y: number;
         relative_z: number;
+        relative_x_km?: number;
+        relative_y_km?: number;
+        relative_z_km?: number;
         forward_distance: number;
         plane_x: number;
         plane_y: number;
@@ -38,7 +50,10 @@ vi.mock("next/dynamic", () => ({
         onDockingApproachComplete,
         focusedContact,
         jumpPhase,
+        cameraMode,
+        scannerRangeKm,
         showContactLabels,
+        waypointContactId,
         celestialAnchors,
         scannerContacts,
         onScannerTelemetryChange,
@@ -71,7 +86,6 @@ vi.mock("next/dynamic", () => ({
             distance_mode?: "surface" | "port";
           }>>;
         }).__scannerTelemetryOverrides) ?? {};
-
         const telemetry = scannerContacts.map((contact, index) => {
           const isPrimaryStation = contact.id === "station-101";
           const baseTelemetry = {
@@ -79,6 +93,9 @@ vi.mock("next/dynamic", () => ({
             relative_x: isPrimaryStation ? 90 : (index + 1) * 10,
             relative_y: 0,
             relative_z: -60,
+            relative_x_km: isPrimaryStation ? 90 : (index + 1) * 10,
+            relative_y_km: 0,
+            relative_z_km: -60,
             forward_distance: 60,
             plane_x: isPrimaryStation ? -0.9 : 0.2,
             plane_y: 0.4,
@@ -102,7 +119,12 @@ vi.mock("next/dynamic", () => ({
       }, [onScannerTelemetryChange, scannerContacts]);
 
       useEffect(() => {
-        if (!dockingApproachContactId) {
+        const disableDockingApproachAutoComplete = Boolean(
+          (globalThis as unknown as {
+            __disableDockingApproachAutoComplete?: boolean;
+          }).__disableDockingApproachAutoComplete,
+        );
+        if (!dockingApproachContactId || disableDockingApproachAutoComplete) {
           return;
         }
 
@@ -123,12 +145,35 @@ vi.mock("next/dynamic", () => ({
           <div data-testid="flight-scene-jump-phase">
             {jumpPhase ?? "idle"}
           </div>
+          <div data-testid="flight-scene-camera-mode">
+            {cameraMode ?? "boresight"}
+          </div>
+          <div data-testid="flight-scene-scanner-range">
+            {String(scannerRangeKm ?? 25)}
+          </div>
           <div data-testid="flight-scene-show-contact-labels">
             {showContactLabels ? "on" : "off"}
+          </div>
+          <div data-testid="flight-scene-waypoint-contact-id">
+            {waypointContactId ?? "none"}
           </div>
           <div data-testid="flight-scene-moon-anchor-count">
             {String(moonAnchorCount)}
           </div>
+          {Array.isArray(celestialAnchors)
+            ? celestialAnchors.map((anchor) => (
+              <div
+                key={anchor.id}
+                data-testid={`flight-scene-celestial-anchor-${anchor.id}`}
+              >
+                {[
+                  anchor.relative_x_km ?? "na",
+                  anchor.relative_y_km ?? "na",
+                  anchor.relative_z_km ?? "na",
+                ].join(",")}
+              </div>
+            ))
+            : null}
         </>
       );
     }
@@ -140,6 +185,7 @@ vi.mock("next/dynamic", () => ({
 describe("Home scanner to flight scene wiring", () => {
   let shipTelemetryPayload: Record<string, unknown>;
   let scannerContactsPayload: Array<Record<string, unknown>>;
+  let scannerContactsGenerationVersion: number;
   let localChartPayload: Record<string, unknown>;
   let localChartStatusCode: number;
   let localChartErrorMessage: string;
@@ -154,6 +200,7 @@ describe("Home scanner to flight scene wiring", () => {
     window.localStorage.setItem("elite_token", "test-token");
     window.localStorage.setItem("elite_user_id", "1");
     (globalThis as unknown as { __scannerTelemetryOverrides?: Record<string, unknown> }).__scannerTelemetryOverrides = {};
+    (globalThis as unknown as { __disableDockingApproachAutoComplete?: boolean }).__disableDockingApproachAutoComplete = false;
 
     shipTelemetryPayload = {
       id: 1,
@@ -218,8 +265,11 @@ describe("Home scanner to flight scene wiring", () => {
         scene_z: -32,
       },
     ];
+    scannerContactsGenerationVersion = 1;
 
     localChartPayload = {
+      snapshot_version: "system-1-gen-1",
+      snapshot_generated_at: "2026-03-09T10:00:00Z",
       system: {
         id: 1,
         name: "Vega",
@@ -404,7 +454,9 @@ describe("Home scanner to flight scene wiring", () => {
               ship_id: 1,
               system_id: 1,
               system_name: "Vega",
-              generation_version: 1,
+              generation_version: scannerContactsGenerationVersion,
+              snapshot_version: `system-1-gen-${scannerContactsGenerationVersion}`,
+              snapshot_generated_at: "2026-03-09T10:00:01Z",
               contacts: scannerContactsPayload,
             }),
             { status: 200 },
@@ -606,6 +658,50 @@ describe("Home scanner to flight scene wiring", () => {
     expect(screen.getByText("Dock Target Range")).toBeInTheDocument();
   });
 
+  it("labels docking approach range using PORT mode for the active approach target", async () => {
+    (globalThis as unknown as {
+      __scannerTelemetryOverrides?: Record<string, Partial<{
+        distance: number;
+        distance_mode: "surface" | "port";
+      }>>;
+    }).__scannerTelemetryOverrides = {
+      "station-101": {
+        distance: 3.4,
+        distance_mode: "port",
+      },
+    };
+    (globalThis as unknown as { __disableDockingApproachAutoComplete?: boolean }).__disableDockingApproachAutoComplete = true;
+
+    render(
+      <ToastProvider>
+        <Home />
+      </ToastProvider>,
+    );
+
+    const flightModeButtons = await screen.findAllByRole("button", {
+      name: /^Flight$/,
+    });
+    fireEvent.click(flightModeButtons[0]);
+
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("flight-scene-focused-contact").textContent,
+      ).toBe("Vega Tradeport");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /^Dock$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /^Cancel Docking$/i })).toBeInTheDocument();
+      expect(
+        screen.getByText(/Vega Tradeport · 3\.4 km PORT \/ 40\.0 km · IN RANGE/),
+      ).toBeInTheDocument();
+    });
+
+    expect(screen.getByText(/Docking computer active: autopilot approach is guiding to docking port\./)).toBeInTheDocument();
+    expect(dockRequestBodies.length).toBe(0);
+  });
+
   it("applies scanner grid range cap and allows expanding range via preset selector", async () => {
     scannerContactsPayload = [
       {
@@ -661,6 +757,27 @@ describe("Home scanner to flight scene wiring", () => {
     await waitFor(() => {
       expect(screen.getByLabelText("Scanner range")).toHaveValue("250");
       expect(screen.getByRole("button", { name: /^ship Traffic Ghost$/i })).toBeInTheDocument();
+    });
+  });
+
+  it("passes the active scanner range into FlightScene telemetry", async () => {
+    render(
+      <ToastProvider>
+        <Home />
+      </ToastProvider>,
+    );
+
+    const flightButton = await screen.findByRole("button", { name: "Flight" });
+    fireEvent.click(flightButton);
+
+    expect(screen.getByTestId("flight-scene-scanner-range").textContent).toBe("100");
+
+    fireEvent.change(screen.getByLabelText("Scanner range"), {
+      target: { value: "500" },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("flight-scene-scanner-range").textContent).toBe("500");
     });
   });
 
@@ -752,7 +869,7 @@ describe("Home scanner to flight scene wiring", () => {
     expect(planetRow.textContent).toContain("1.60M km");
   });
 
-  it("updates scanner contact row distance from live telemetry updates", async () => {
+  it("prefers live telemetry for scanner contact row distance", async () => {
     scannerContactsPayload = [
       {
         id: "station-101",
@@ -909,6 +1026,45 @@ describe("Home scanner to flight scene wiring", () => {
     ).toContain("TARGET");
     expect(screen.getByTestId("scanner-chart-audio-hints").textContent).toContain(
       "Chart hints: chart.waypoint_lock, ops.docking_request_accept",
+    );
+  });
+
+  it("rejects stale local chart snapshots when scanner generation changes", async () => {
+    scannerContactsGenerationVersion = 2;
+    localChartPayload = {
+      ...localChartPayload,
+      snapshot_version: "system-1-gen-1",
+      system: {
+        ...(localChartPayload.system as Record<string, unknown>),
+        generation_version: 1,
+      },
+      mutable_state: {
+        ...(localChartPayload.mutable_state as Record<string, unknown>),
+        flight_phase: "docking-approach",
+        local_target_contact_id: "station-101",
+        local_target_status: "in-system-locked",
+      },
+    };
+
+    render(
+      <ToastProvider>
+        <Home />
+      </ToastProvider>,
+    );
+
+    const systemModeButtons = await screen.findAllByRole("button", {
+      name: /^System$/,
+    });
+    fireEvent.click(systemModeButtons[0]);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Offline · Local chart awaiting compatible snapshot."),
+      ).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId("scanner-chart-state").textContent).toContain(
+      "idle · none",
     );
   });
 
@@ -1107,6 +1263,46 @@ describe("Home scanner to flight scene wiring", () => {
     fireEvent.click(labelsToggle);
 
     expect(screen.getByTestId("flight-scene-show-contact-labels").textContent).toBe("on");
+  });
+
+  it("persists flight camera mode selection", async () => {
+    const firstRender = render(
+      <ToastProvider>
+        <Home />
+      </ToastProvider>,
+    );
+
+    const flightModeButtons = await screen.findAllByRole("button", {
+      name: /^Flight$/,
+    });
+    fireEvent.click(flightModeButtons[0]);
+
+    expect(screen.getByTestId("flight-scene-camera-mode").textContent).toBe("boresight");
+
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    const cameraModeSelect = await screen.findByTestId("flight-setting-camera-mode");
+    fireEvent.change(cameraModeSelect, { target: { value: "cockpit" } });
+
+    expect(window.localStorage.getItem("elite_flight_camera_mode")).toBe("cockpit");
+    expect(screen.getByTestId("flight-scene-camera-mode").textContent).toBe("cockpit");
+
+    firstRender.unmount();
+
+    render(
+      <ToastProvider>
+        <Home />
+      </ToastProvider>,
+    );
+
+    const flightModeButtonsReloaded = await screen.findAllByRole("button", {
+      name: /^Flight$/,
+    });
+    fireEvent.click(flightModeButtonsReloaded[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+
+    expect((await screen.findByTestId("flight-setting-camera-mode") as HTMLSelectElement).value)
+      .toBe("cockpit");
+    expect(screen.getByTestId("flight-scene-camera-mode").textContent).toBe("cockpit");
   });
 
   it("persists flight audio settings toggles", async () => {
@@ -1487,6 +1683,65 @@ describe("Home scanner to flight scene wiring", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("flight-scene-moon-anchor-count").textContent).toBe("1");
+    });
+  });
+
+  it("prefers live scanner-relative coordinates for celestial anchors", async () => {
+    scannerContactsPayload = [
+      ...scannerContactsPayload,
+      {
+        id: "moon-401",
+        contact_type: "moon",
+        name: "Vega Prime I-a",
+        distance_km: 42,
+        bearing_x: 0.05,
+        bearing_y: -0.08,
+        orbiting_planet_name: "Vega Prime I",
+        relative_x_km: 42,
+        relative_y_km: -3,
+        relative_z_km: -18,
+        scene_x: 99,
+        scene_y: 12,
+        scene_z: -77,
+      },
+    ];
+
+    localChartPayload = {
+      ...localChartPayload,
+      moons_by_parent_body_id: {
+        "201": [
+          {
+            id: 401,
+            body_kind: "moon",
+            body_type: "ice",
+            name: "Vega Prime I-a",
+            generation_version: 1,
+            parent_body_id: 201,
+            orbit_index: 1,
+            orbit_radius_km: 3500,
+            radius_km: 1900,
+            position_x: 80500,
+            position_y: 120,
+            position_z: -1700,
+          },
+        ],
+      },
+    };
+
+    render(
+      <ToastProvider>
+        <Home />
+      </ToastProvider>,
+    );
+
+    const flightModeButtons = await screen.findAllByRole("button", {
+      name: /^Flight$/,
+    });
+    fireEvent.click(flightModeButtons[0]);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("flight-scene-celestial-anchor-moon-401").textContent)
+        .toBe("42,-3,-18");
     });
   });
 
@@ -2013,8 +2268,8 @@ describe("Home scanner to flight scene wiring", () => {
         center_x: number;
         center_z: number;
       };
-      expect(storedView.center_x).toBeCloseTo(77000, 3);
-      expect(storedView.center_z).toBeCloseTo(-1800, 3);
+      expect(storedView.center_x).toBeCloseTo(77050, 3);
+      expect(storedView.center_z).toBeCloseTo(-1780, 3);
     });
   });
 
@@ -2285,6 +2540,34 @@ describe("Home scanner to flight scene wiring", () => {
     expect(scrollIntoViewMock).toHaveBeenCalled();
   });
 
+  it("prefers live telemetry distance for the selected system contact", async () => {
+    (globalThis as unknown as {
+      __scannerTelemetryOverrides?: Record<string, { distance: number }>;
+    }).__scannerTelemetryOverrides = {
+      "planet-201": {
+        distance: 28,
+      },
+    };
+
+    render(
+      <ToastProvider>
+        <Home />
+      </ToastProvider>,
+    );
+
+    const systemModeButton = (await screen.findAllByRole("button", {
+      name: /^System$/,
+    }))[0];
+    fireEvent.click(systemModeButton);
+
+    const chartPlanetRow = await screen.findByTestId("local-chart-row-planet-201");
+    fireEvent.click(chartPlanetRow);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("system-selected-range").textContent).toContain("28.0 km");
+    });
+  });
+
   it("provides system quick actions for focus and waypoint", async () => {
     render(
       <ToastProvider>
@@ -2416,6 +2699,12 @@ describe("Home scanner to flight scene wiring", () => {
       name: /^Flight$/,
     }))[0];
     fireEvent.click(flightModeButton);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("flight-scene-waypoint-contact-id").textContent).toBe(
+        "planet-201",
+      );
+    });
 
     const jumpButton = screen.getByRole("button", { name: /^System Jump$/i });
     expect(jumpButton).toBeEnabled();
@@ -2901,7 +3190,7 @@ describe("Home scanner to flight scene wiring", () => {
     });
   });
 
-  it("plots in-view scanner blips using camera FOV alignment", async () => {
+  it("plots scanner blips using canonical plane projection", async () => {
     render(
       <ToastProvider>
         <Home />
@@ -2918,7 +3207,65 @@ describe("Home scanner to flight scene wiring", () => {
     await waitFor(() => {
       const leftValue = Number.parseFloat(stationBlip.style.left.replace("%", ""));
       expect(Number.isFinite(leftValue)).toBe(true);
-      expect(leftValue).toBeGreaterThan(50);
+      expect(leftValue).toBeLessThan(50);
+    });
+  });
+
+  it("keeps nearby large celestial scanner blips on canonical plane projection", async () => {
+    window.localStorage.setItem("elite_scanner_range_km", "500");
+
+    scannerContactsPayload = [
+      {
+        id: "planet-201",
+        contact_type: "planet",
+        name: "Vega Prime I",
+        distance_km: 420.3,
+        bearing_x: -0.2,
+        bearing_y: -0.1,
+        orbiting_planet_name: null,
+        scene_x: -14,
+        scene_y: 0,
+        scene_z: -48,
+        body_kind: "planet",
+        body_type: "gas-giant",
+        radius_km: 42092,
+        relative_x_km: -380,
+        relative_y_km: -220,
+        relative_z_km: -160,
+      },
+    ];
+
+    (globalThis as unknown as {
+      __scannerTelemetryOverrides?: Record<string, Record<string, unknown>>;
+    }).__scannerTelemetryOverrides = {
+      "planet-201": {
+        plane_x: -0.95,
+        plane_y: 0.78,
+        fov_x: 0.04,
+        fov_y: -0.06,
+        in_view: true,
+        distance: 420.3,
+      },
+    };
+
+    render(
+      <ToastProvider>
+        <Home />
+      </ToastProvider>,
+    );
+
+    const flightButton = await screen.findByRole("button", { name: "Flight" });
+    fireEvent.click(flightButton);
+
+    const planetBlip = await screen.findByRole("button", {
+      name: "planet Vega Prime I",
+    });
+
+    await waitFor(() => {
+      const leftValue = Number.parseFloat(planetBlip.style.left.replace("%", ""));
+      expect(Number.isFinite(leftValue)).toBe(true);
+      expect(leftValue).toBeGreaterThan(15);
+      expect(leftValue).toBeLessThan(25);
     });
   });
 

@@ -1,4 +1,5 @@
-from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, Integer, Text
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, Float, ForeignKey
+from sqlalchemy import Integer, Text
 from sqlalchemy.sql import func
 
 from app.db.base import Base
@@ -56,5 +57,17 @@ class Ship(Base):
     flight_locked_destination_contact_type = Column(Text, nullable=True)
     flight_locked_destination_contact_id = Column(BigInteger, nullable=True)
     flight_phase_started_at = Column(DateTime(timezone=True), nullable=True)
+    flight_heading_yaw_deg = Column(Float, nullable=False, default=0)
+    flight_heading_pitch_deg = Column(Float, nullable=False, default=0)
+    flight_heading_roll_deg = Column(Float, nullable=False, default=0)
+    flight_control_velocity_x = Column(Float, nullable=False, default=0)
+    flight_control_velocity_y = Column(Float, nullable=False, default=0)
+    flight_control_velocity_z = Column(Float, nullable=False, default=0)
+    flight_control_thrust_input = Column(Float, nullable=False, default=0)
+    flight_control_yaw_input = Column(Float, nullable=False, default=0)
+    flight_control_pitch_input = Column(Float, nullable=False, default=0)
+    flight_control_roll_input = Column(Float, nullable=False, default=0)
+    flight_control_brake_active = Column(Boolean, nullable=False, default=False)
+    flight_control_updated_at = Column(DateTime(timezone=True), nullable=True)
     last_update_at = Column(DateTime(timezone=True), server_default=func.now())
     version = Column(BigInteger, nullable=False, default=0)

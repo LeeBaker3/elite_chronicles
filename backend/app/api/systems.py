@@ -44,6 +44,12 @@ MIN_HYPERSPACE_RANGE_UNITS = 120.0
 HYPERSPACE_RANGE_UNITS_PER_FUEL_CAP = 4.0
 
 
+def _local_space_snapshot_version(system_id: int, generation_version: int) -> str:
+    """Return a stable snapshot version for local-space contracts."""
+
+    return f"system-{int(system_id)}-gen-{int(generation_version)}"
+
+
 def _resolve_dataset_source(dataset_mode: str) -> GalaxyDatasetSource:
     """Return normalized dataset source metadata for galaxy endpoints."""
 
@@ -753,6 +759,11 @@ def get_local_chart(
     )
 
     return LocalChartResponse(
+        snapshot_version=_local_space_snapshot_version(
+            system_id=int(system.id),
+            generation_version=int(system.generation_version or 1),
+        ),
+        snapshot_generated_at=datetime.now(UTC),
         system=LocalChartSystemSummary(
             id=system.id,
             name=system.name,

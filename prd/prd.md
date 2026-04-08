@@ -1,10 +1,17 @@
 Elite Chronicles - Product Requirements Document (PRD)
-Version: 0.4
-Date: 2026-02-09
+Version: 0.5
+Date: 2026-03-12
 Owner: Lee
 
 Summary
-Elite Chronicles is a browser-based, multiplayer space trading and exploration game inspired by 1980s Elite, blending real-time spaceflight with AI-assisted text adventure sequences. The game features a persistent world, a dynamic economy, and a communication system that models distance-based message delays. This PRD captures product goals, functional requirements, non-functional requirements, and delivery phases.
+Elite Chronicles is a multi-client, multiplayer space trading and
+exploration game inspired by 1980s Elite, blending real-time spaceflight
+with AI-assisted text adventure sequences. The product is delivered through
+first-party web and desktop clients that share one authoritative backend.
+The game features a persistent world, a dynamic economy, and a
+communication system that models distance-based message delays. This PRD
+captures product goals, functional requirements, non-functional
+requirements, and delivery phases.
 
 1. Goals and Non-Goals
 
@@ -14,6 +21,8 @@ Elite Chronicles is a browser-based, multiplayer space trading and exploration g
 - Provide AI-assisted text adventures with a confirmation step for player intent.
 - Implement a dynamic economy with production and consumption that is configurable.
 - Provide secure authentication, admin tools, and robust logging.
+- Support multiple first-party clients against one shared authoritative
+	backend, beginning with a web client and a Panda3D desktop client.
 
 1.2 Non-Goals (initial release)
 - Full N-body orbital mechanics simulation.
@@ -36,12 +45,16 @@ Elite Chronicles is a browser-based, multiplayer space trading and exploration g
 
 3. Product Pillars
 - Agency: Open-ended playstyles (trade, fight, explore, story).
-- Immersion: Retro-futuristic visuals plus text adventure depth.
+- Immersion: Retro-futuristic visuals plus text adventure depth, with
+	platform-specific presentation where needed.
 - Persistence: Shared world, durable player history, and economy.
 - Clarity: AI text interpretation must be confirmed by player.
+- Consistency: Web and desktop clients may differ in controls and runtime
+	presentation, but they must share the same authoritative simulation state
+	and contract meanings.
 
 4. Core Game Loop
-1) Launch or resume session.
+1) Launch or resume session from a supported first-party client.
 2) Travel within a system or jump to another.
 3) Trade, fight, or explore.
 4) Dock at a station or land on a planet.
@@ -51,12 +64,36 @@ Elite Chronicles is a browser-based, multiplayer space trading and exploration g
 
 5. Functional Requirements
 
+5.0 Client Platform Architecture
+- The FastAPI backend is authoritative for persistent simulation,
+	player/ship state, world coordinates, economy, comms, and multiplayer
+	synchronization.
+- First-party clients may differ in rendering, camera, controls, input, and
+	UX layout.
+- First-party clients must reuse shared backend contracts and must not fork
+	gameplay rules or introduce client-authoritative simulation.
+- Client-side rendering transforms, including floating-origin behavior, are
+	presentation-only and must not change authoritative server coordinates.
+- Long-term client-evolution rule:
+	- implementation decisions should favor the desktop client as the primary
+	  long-term runtime, especially for performance-sensitive rendering and input
+	  flows.
+	- minor web-client changes or compatibility middleware are acceptable where
+	  needed, provided backend authority and shared contract semantics stay
+	  intact.
+
 5.1 Accounts and Authentication
 - Register with email, username, password.
 - Login and session management with secure cookies or JWT.
 - Role-based access (user, admin, moderator).
 - Forgot password flow with secure, expiring token.
 - Token refresh (if used) and clear 401 handling.
+- Desktop-client auth storage note:
+	- plaintext local token persistence is acceptable for local desktop
+	  development only.
+	- production desktop releases must use OS-backed secure credential storage.
+	- migration from development-only plaintext storage to secure desktop
+	  storage remains an explicit release-readiness requirement.
 
 5.2 Player State
 - Track player status: alive/dead, in-ship or on-foot (station/planet).
@@ -166,6 +203,8 @@ Elite Chronicles is a browser-based, multiplayer space trading and exploration g
 - Session restore on reconnect.
 - Crash recovery returns player to safe state.
 - Versioned save snapshots for rollback.
+- Session restore must preserve the same commander and ship state across
+	supported first-party clients.
 
 5.14 User Stories and Acceptance Criteria
 
@@ -183,6 +222,12 @@ Player and Ship State
 - Story: As a player, I want fuel, shields, and energy tracked accurately.
 	- Acceptance: Fuel decreases when traveling or jumping based on rules.
 	- Acceptance: Shields recharge only after a no-hit delay.
+- Story: As a player, I want to access the same commander from supported
+	  first-party clients without state divergence.
+	- Acceptance: Web and desktop clients both load the same persistent player,
+	  ship, and location state from the backend.
+	- Acceptance: Rendering or input differences between clients do not change
+	  authoritative simulation outcomes by themselves.
 
 Combat
 - Story: As a bounty hunter, I want combat to feel fair and deterministic.

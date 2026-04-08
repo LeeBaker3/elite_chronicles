@@ -5,6 +5,10 @@ All notable changes to this project are documented in this file.
 ## [Unreleased] - 2026-02-13
 
 ### Added
+- Batch 13 planning-governance alignment updates in
+  [prd/batch-13-collision-outcomes-damage-sfx-plan.md](prd/batch-13-collision-outcomes-damage-sfx-plan.md), including required Core Design Alignment,
+  Readiness Checklist, Test and Validation Evidence, and Documentation Update
+  Checklist sections.
 - Manifest-backed frontend media SFX system with canonical event-key mapping,
   file-based audio resolver, and integrity tests:
   - `frontend/src/components/audio/audioManifest.ts`
@@ -43,6 +47,20 @@ All notable changes to this project are documented in this file.
 - Backend tests for bootstrap real-name extraction/selection behavior (`backend/tests/test_bootstrap_known_star_systems.py`).
 
 ### Changed
+- Added a desktop-only retro cockpit HUD presenter with an arched lower
+  console shell and comms-ready panel data, exposed through the headless debug
+  runtime output for future Panda3D UI work.
+- Extended the desktop HUD work with a first Panda3D overlay shell, live
+  backend comms channel/message data in the cockpit pane, and a second amber
+  theme variant with adjusted arch/bezel proportions.
+- Extended the desktop scaffold from one-shot bootstrap to snapshot-driven
+  headless runtime ticks, reusing backend `flight-snapshot` refresh hints to
+  refresh local contacts/chart state only when required.
+- Moved backend manual-flight control tuning from hard-coded ship API values
+  into environment-backed settings and documented the new `backend/.env`
+  controls for production deployments.
+- Documented Batch 22 local-space snapshot compatibility fields and docking distance labeling behavior in the root and backend READMEs.
+- Clarified Batch 22 implementation status in the planning doc and added page-level regression coverage for `PORT` versus `SURFACE` docking distance labels during active docking approach.
 - Migrated frontend flight/scanner/chart/admin/comms/trade media playback from
   generated tone data URIs to manifest-resolved WAV assets in
   `frontend/public/audio/sfx`.

@@ -54,6 +54,8 @@ class LocalChartMutableState(BaseModel):
 
 
 class LocalChartResponse(BaseModel):
+    snapshot_version: str
+    snapshot_generated_at: datetime
     system: LocalChartSystemSummary
     star: LocalChartBody
     planets: list[LocalChartBody]

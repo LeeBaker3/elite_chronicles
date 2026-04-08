@@ -8,7 +8,25 @@ Command clearance console for Elite Chronicles.
 
 - backend/ FastAPI services, migrations, and tests.
 - frontend/ Next.js interface.
+- desktop/ Panda3D desktop client.
 - prd/ Product notes and session history.
+
+Desktop-client direction note:
+
+- The repository now treats desktop as a parallel first-party client beside
+	the existing web client.
+- Backend remains authoritative; web and desktop consume shared contracts.
+
+Environment model:
+
+- `backend/` continues to use the existing backend Python environment.
+- `desktop/` should use its own local virtual environment, typically
+	`desktop/.venv`.
+- The desktop client talks to the same running backend service over HTTP; it
+	does not share the backend runtime environment by default.
+- Backend flight-control tuning is environment-backed in `backend/.env`
+	and documented in `backend/README.md` so movement behavior does not require
+	source edits per deployment.
 
 ## Product Docs
 
@@ -43,3 +61,5 @@ cd backend && SITE_PACKAGES=$(../.venv/bin/python -c 'import site; print(site.ge
 
 - `GET /api/ships/{ship_id}/operations` returns human-readable `details`; dock/undock/jump entries resolve station names with `Station #<id>` fallback only if a name is unavailable.
 - `POST /api/ships/{ship_id}/jump` now arrives in destination system deep-space (no auto-dock), so docking remains an explicit follow-up step before trading.
+- `GET /api/ships/{ship_id}/local-contacts` and `GET /api/systems/{system_id}/local-chart` expose additive `snapshot_version` and `snapshot_generated_at` fields so the frontend can reject mixed scanner/chart state snapshots during active flight.
+- Docking distance semantics are explicit in flight surfaces: scanner/list views remain stable on center/surface-style distance labels, while active docking approach UI may switch to `PORT` distance labeling for the current approach target.

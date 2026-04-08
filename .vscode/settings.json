@@ -5,6 +5,12 @@
         "git add": true,
         "gh": true,
         "git commit": true,
-        "npm run lint": true
+        "npm run lint": true,
+        "set": true,
+        "../.venv/bin/python": true,
+        "/^cd \"/Users/lee/Library/Mobile Documents/com~apple~CloudDocs/Projects/Elite/root/backend\" && set -a && source \\./\\.env && set \\+a && \\.\\./\\.venv/bin/python -m pytest tests/test_auth_starter_ship\\.py tests/test_client_platform_contracts\\.py tests/test_players_ships_markets\\.py -q$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
     }
 }

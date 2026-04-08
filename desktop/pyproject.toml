@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "elite-chronicles-desktop"
+version = "0.1.0"
+description = "Panda3D desktop client scaffold for Elite Chronicles"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "httpx>=0.27,<0.28",
+  "pydantic>=2.9,<3.0",
+  "panda3d>=1.10.15,<1.12",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0,<9.0",
+]
+
+[project.scripts]
+elite-desktop = "desktop_client.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["desktop_client*"]
